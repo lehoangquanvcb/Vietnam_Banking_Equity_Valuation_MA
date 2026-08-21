@@ -1,0 +1,6 @@
+Streamlit Community Cloud
+Repository: your GitHub repository
+Branch: main
+Main file: app.py
+Python: 3.12 recommended to match the proven local stack.
+Cloud reads repository CSV/model outputs only; it does not call Vnstock Sponsor.

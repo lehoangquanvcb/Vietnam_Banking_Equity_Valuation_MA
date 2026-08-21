@@ -1,0 +1,21 @@
+Ticker,Beta,SizePremium,LongTermGrowth,NormalizedROE,PayoutRatio,Note
+VCB,0.90,0.000,0.055,,0.25,Editable assumption
+BID,1.00,0.000,0.050,,0.20,Editable assumption
+CTG,1.00,0.000,0.050,,0.20,Editable assumption
+TCB,1.05,0.000,0.055,,0.20,Editable assumption
+MBB,1.05,0.000,0.055,,0.20,Editable assumption
+ACB,0.95,0.000,0.050,,0.25,Editable assumption
+HDB,1.10,0.005,0.055,,0.15,Editable assumption
+VPB,1.20,0.005,0.055,,0.15,Editable assumption
+STB,1.10,0.005,0.050,,0.15,Editable assumption
+VIB,1.15,0.005,0.050,,0.15,Editable assumption
+SHB,1.15,0.005,0.050,,0.10,Editable assumption
+TPB,1.15,0.005,0.050,,0.15,Editable assumption
+LPB,1.10,0.005,0.050,,0.15,Editable assumption
+OCB,1.15,0.005,0.050,,0.15,Editable assumption
+MSB,1.10,0.005,0.050,,0.15,Editable assumption
+SSB,1.10,0.005,0.050,,0.15,Editable assumption
+EIB,1.05,0.005,0.045,,0.15,Editable assumption
+NAB,1.20,0.010,0.050,,0.10,Editable assumption
+KLB,1.25,0.010,0.045,,0.10,Editable assumption
+BAB,1.25,0.010,0.045,,0.10,Editable assumption

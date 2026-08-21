@@ -1,0 +1,21 @@
+﻿Ticker,RetrievedAt,DataType,SourceMode,ParserLog,ROE,ROA,NIM,NPL,CAR,CIR,LDR,CASA,EPS,BVPS,PB,PE,TotalAssets,GrossLoans,CustomerDeposits,Equity,IntangibleAssets,TangibleEquity,NPAT,NetInterestIncome,OperatingIncome,ProvisionExpense,Price
+VCB,2026-08-21T15:03:13+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,59.1
+BID,2026-08-21T15:03:43+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,36.9
+CTG,2026-08-21T15:04:09+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,32.15
+TCB,2026-08-21T15:04:37+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,31.65
+MBB,2026-08-21T15:05:09+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,20.85
+ACB,2026-08-21T15:05:43+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,22.75
+HDB,2026-08-21T15:06:14+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,27.3
+VPB,2026-08-21T15:06:43+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,25.7
+STB,2026-08-21T15:07:11+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,74.7
+VIB,2026-08-21T15:07:39+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,14.75
+SHB,2026-08-21T15:08:11+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,11.9
+TPB,2026-08-21T15:08:39+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,14.8
+LPB,2026-08-21T15:09:09+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,50.0
+OCB,2026-08-21T15:09:39+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,10.9
+MSB,2026-08-21T15:10:11+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,15.9
+SSB,2026-08-21T15:10:35+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,15.3
+EIB,2026-08-21T15:11:01+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,17.4
+NAB,2026-08-21T15:11:25+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,11.6
+KLB,2026-08-21T15:11:51+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,12.55
+BAB,2026-08-21T15:12:17+07:00,ACTUAL_PARTIAL,VNSTOCK_BRONZE,FUNDAMENTAL_ERROR:NotImplementedError: isna is not defined for MultiIndex,,,,,,,,,,,,,,,,,,,,,,,10.7

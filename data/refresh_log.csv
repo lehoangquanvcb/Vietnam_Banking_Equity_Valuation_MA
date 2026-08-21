@@ -1,0 +1,41 @@
+﻿Dataset,Status,Message,RetrievedAt
+fundamental:VCB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:03:13+07:00
+price:VCB,OK,OK,2026-08-21T15:03:14+07:00
+fundamental:BID,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:03:43+07:00
+price:BID,OK,OK,2026-08-21T15:03:43+07:00
+fundamental:CTG,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:04:09+07:00
+price:CTG,OK,OK,2026-08-21T15:04:10+07:00
+fundamental:TCB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:04:37+07:00
+price:TCB,OK,OK,2026-08-21T15:04:38+07:00
+fundamental:MBB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:05:09+07:00
+price:MBB,OK,OK,2026-08-21T15:05:10+07:00
+fundamental:ACB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:05:43+07:00
+price:ACB,OK,OK,2026-08-21T15:05:46+07:00
+fundamental:HDB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:06:14+07:00
+price:HDB,OK,OK,2026-08-21T15:06:14+07:00
+fundamental:VPB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:06:43+07:00
+price:VPB,OK,OK,2026-08-21T15:06:43+07:00
+fundamental:STB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:07:11+07:00
+price:STB,OK,OK,2026-08-21T15:07:13+07:00
+fundamental:VIB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:07:39+07:00
+price:VIB,OK,OK,2026-08-21T15:07:39+07:00
+fundamental:SHB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:08:11+07:00
+price:SHB,OK,OK,2026-08-21T15:08:11+07:00
+fundamental:TPB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:08:39+07:00
+price:TPB,OK,OK,2026-08-21T15:08:39+07:00
+fundamental:LPB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:09:09+07:00
+price:LPB,OK,OK,2026-08-21T15:09:10+07:00
+fundamental:OCB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:09:39+07:00
+price:OCB,OK,OK,2026-08-21T15:09:40+07:00
+fundamental:MSB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:10:11+07:00
+price:MSB,OK,OK,2026-08-21T15:10:11+07:00
+fundamental:SSB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:10:35+07:00
+price:SSB,OK,OK,2026-08-21T15:10:35+07:00
+fundamental:EIB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:11:01+07:00
+price:EIB,OK,OK,2026-08-21T15:11:02+07:00
+fundamental:NAB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:11:25+07:00
+price:NAB,OK,OK,2026-08-21T15:11:26+07:00
+fundamental:KLB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:11:51+07:00
+price:KLB,OK,OK,2026-08-21T15:11:51+07:00
+fundamental:BAB,ERROR,NotImplementedError: isna is not defined for MultiIndex,2026-08-21T15:12:17+07:00
+price:BAB,OK,OK,2026-08-21T15:12:18+07:00

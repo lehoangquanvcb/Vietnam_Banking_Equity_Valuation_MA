@@ -1,0 +1,21 @@
+Ticker,PeerGroup,OwnershipType
+VCB,State-owned large,SOCB
+BID,State-owned large,SOCB
+CTG,State-owned large,SOCB
+TCB,Private large,Private
+MBB,Private large,Private
+ACB,Private large,Private
+HDB,Private large,Private
+VPB,Private large,Private
+STB,Private large,Private
+VIB,Private mid,Private
+SHB,Private mid,Private
+TPB,Private mid,Private
+LPB,Private mid,Private
+OCB,Private mid,Private
+MSB,Private mid,Private
+SSB,Private mid,Private
+EIB,Private mid,Private
+NAB,Private small,Private
+KLB,Private small,Private
+BAB,Private small,Private

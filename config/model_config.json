@@ -1,0 +1,72 @@
+{
+  "risk_free_rate": 0.05,
+  "equity_risk_premium": 0.075,
+  "default_beta": 1.0,
+  "default_size_premium": 0.005,
+  "long_term_growth": 0.05,
+  "normalized_roe_anchor": 0.15,
+  "roe_mean_reversion": 0.25,
+  "forecast_years": 5,
+  "payout_ratio": 0.2,
+  "justified_pb_floor": 0.4,
+  "justified_pb_cap": 3.5,
+  "peer_pb_roe_elasticity": 0.5,
+  "valuation_weights": {
+    "ResidualIncome": 0.4,
+    "JustifiedPB": 0.25,
+    "PeerPB": 0.2,
+    "HistoricalPB": 0.15
+  },
+  "control_premium": 0.2,
+  "annual_cost_synergy_pct_target_opex": 0.08,
+  "annual_revenue_synergy_pct_target_income": 0.03,
+  "synergy_realization_years": 3,
+  "synergy_ramp": 0.7,
+  "integration_cost_pct_equity": 0.05,
+  "credit_mark_pct_gross_loans": 0.02,
+  "identifiable_intangible_pct_customer_deposits": 0.01,
+  "tax_rate": 0.2,
+  "mna_synergy_growth": 0.03,
+  "mna_hurdle_rate": 0.14,
+  "restructuring_target_roe": 0.15,
+  "restructuring_npl_haircut": 0.35,
+  "restructuring_extra_provision_pct_loans": 0.01,
+  "score_weights": {
+    "profitability": 0.22,
+    "growth": 0.15,
+    "asset_quality": 0.18,
+    "funding": 0.12,
+    "capital": 0.13,
+    "valuation": 0.2
+  },
+  "report_pages_target": 10,
+  "report_brand_title": "NỀN TẢNG PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG VIỆT NAM",
+  "report_disclaimer": "Tài liệu phân tích phục vụ mục đích tham khảo; không phải khuyến nghị mua/bán chứng khoán hoặc chào mua trong một thương vụ cụ thể.",
+  "report_quality_gate": {
+    "official_min_coverage": 0.8,
+    "draft_min_coverage": 0.6,
+    "max_core_missing_official": 2,
+    "max_core_missing_draft": 5,
+    "max_data_age_days": 120,
+    "core_metrics": [
+      "Price",
+      "BVPS_Used",
+      "ROE_Used",
+      "NPL",
+      "TotalAssets",
+      "GrossLoans",
+      "CustomerDeposits",
+      "Equity",
+      "NPAT",
+      "FairValue_Base"
+    ]
+  },
+  "normalization_flags": {
+    "roe_high": 0.3,
+    "roe_low": 0.03,
+    "npl_high": 0.03,
+    "car_low": 0.1,
+    "pb_above_justified_buffer": 0.15,
+    "price_move_alert": 0.35
+  }
+}

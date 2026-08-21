@@ -1,0 +1,21 @@
+{
+  "status": "OK",
+  "banks": 20,
+  "banks_with_fair_value": 0,
+  "banks_with_price": 20,
+  "median_upside": null,
+  "methodology": [
+    "Residual Income",
+    "Justified P/B",
+    "Peer P/B",
+    "Historical P/B"
+  ],
+  "mna_methodology": [
+    "Standalone value",
+    "Control premium",
+    "PV synergies",
+    "PPA / adjusted net assets",
+    "Goodwill",
+    "Restructuring-adjusted equity"
+  ]
+}
