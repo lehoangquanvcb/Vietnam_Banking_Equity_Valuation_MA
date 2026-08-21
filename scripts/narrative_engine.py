@@ -20,7 +20,7 @@ def mult(v,d=2):
 
 def money(v):
     x=n(v)
-    return "N/A" if x is None else f"{x:,.0f} đồng/cp"
+    return "N/A" if x is None else f"{x*1000:,.0f} đồng/cp"
 
 def bn(v):
     x=n(v)
@@ -43,16 +43,19 @@ def investment_view_vi(row):
 
 def executive_summary(row):
     t=str(row.get("Ticker",""))
-    view=investment_view_vi(row)
     p=money(row.get("Price")); fv=money(row.get("FairValue_Base")); up=pct(row.get("Upside_Base"))
     roe=pct(row.get("ROE_Used")); pb=mult(row.get("PB_Current")); npl=pct(row.get("NPL")); car=pct(row.get("CAR"))
     fview=str(row.get("FundamentalView","CHƯA ĐỦ DỮ LIỆU"))
+    strategic=""
+    if n(row.get("StrategicPriceLow")) is not None:
+        strategic=(f" Song song với định giá cơ bản, lớp Market Intelligence ghi nhận vùng giá chiến lược/M&A "
+                   f"{money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}. Vùng này được trình bày riêng "
+                   "vì có thể phản ánh scarcity premium, quy mô lô, quyền kiểm soát, optionality tái cơ cấu và synergy; không phải giá trị hợp lý fundamental.")
     return (
-        f"Quan điểm định giá đối với {t}: {view}. Cổ phiếu đang giao dịch tại {p}, trong khi giá trị hợp lý cơ sở của "
-        f"mô hình là {fv}, tương ứng tiềm năng tăng/giảm giá {up}. Năng lực sinh lời thể hiện qua ROE {roe}; "
-        f"P/B hiện tại {pb}. Chất lượng tài sản được theo dõi qua NPL {npl}, trong khi CAR ở mức {car}. "
-        f"Điểm cơ bản tổng hợp của ngân hàng được xếp loại {fview}. Giá trị hợp lý được xác định chủ yếu từ mô hình "
-        "Thu nhập thặng dư (Residual Income), sau đó đối chiếu với P/B hợp lý, P/B nhóm tương đồng và vùng định giá lịch sử."
+        f"{t} đang giao dịch tại {p}. Giá trị cơ bản của mô hình là {fv}, tương ứng chênh lệch {up} so với thị giá. "
+        f"ROE {roe}, P/B {pb}, NPL {npl} và CAR {car}; chất lượng cơ bản tổng hợp được xếp {fview}. "
+        "Giá trị cơ bản được xác định bằng Residual Income và kiểm tra chéo với P/B hợp lý, peer P/B và vùng P/B lịch sử."
+        + strategic
     )
 
 def business_profile(row, peer_row=None):

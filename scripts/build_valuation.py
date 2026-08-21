@@ -17,6 +17,7 @@ groups=load_csv(ROOT/"config/bank_groups.csv")
 ass=load_csv(ROOT/"config/valuation_assumptions.csv")
 hist=load_csv(DATA/"bank_history_long.csv")
 precedents=load_csv(ROOT/"config/transaction_precedents.csv")
+market_intel=load_csv(ROOT/"config/market_intelligence.csv")
 
 if snap.empty:
     pd.DataFrame().to_csv(OUT/"valuation_summary.csv",index=False)
@@ -109,6 +110,38 @@ d["FairValue_Base"]=d.apply(blend,axis=1)
 d["FairValue_Bear"]=d["FairValue_Base"]*0.85
 d["FairValue_Bull"]=d["FairValue_Base"]*1.15
 d["Upside_Base"]=d["FairValue_Base"]/d["Price"]-1
+
+# Strategic / M&A market intelligence is deliberately separated from fundamental fair value.
+# It may contain user-supplied or public deal intelligence and must never overwrite FairValue_Base.
+if not market_intel.empty and "Ticker" in market_intel.columns:
+    mi=market_intel.copy()
+    mi["Ticker"]=mi["Ticker"].astype(str).str.upper()
+    for c in ["LowPrice","HighPrice","ReferenceStake"]:
+        if c in mi: mi[c]=pd.to_numeric(mi[c],errors="coerce")
+    keep=[c for c in ["Ticker","IntelligenceType","LowPrice","HighPrice","ReferenceStake","AsOfDate","Source","Confidence","Note"] if c in mi]
+    mi=mi[keep].drop_duplicates("Ticker",keep="last")
+    mi=mi.rename(columns={"LowPrice":"StrategicPriceLow","HighPrice":"StrategicPriceHigh","ReferenceStake":"StrategicReferenceStake","AsOfDate":"StrategicAsOfDate","Source":"StrategicSource","Confidence":"StrategicConfidence","Note":"StrategicNote","IntelligenceType":"StrategicIntelligenceType"})
+    d=d.merge(mi,on="Ticker",how="left")
+else:
+    for c in ["StrategicPriceLow","StrategicPriceHigh","StrategicReferenceStake","StrategicAsOfDate","StrategicSource","StrategicConfidence","StrategicNote","StrategicIntelligenceType"]: d[c]=np.nan
+
+d["StrategicPriceMid"]=(d["StrategicPriceLow"]+d["StrategicPriceHigh"])/2
+d["StrategicPremiumLow"]=d["StrategicPriceLow"]/d["Price"]-1
+d["StrategicPremiumHigh"]=d["StrategicPriceHigh"]/d["Price"]-1
+d["StrategicVsFundamentalLow"]=d["StrategicPriceLow"]/d["FairValue_Base"]-1
+d["StrategicVsFundamentalHigh"]=d["StrategicPriceHigh"]/d["FairValue_Base"]-1
+
+# Transaction-value curve: larger strategic blocks can command higher scarcity/control value.
+# When a directly observed/intelligence range exists, interpolate within that range by stake size.
+def strategic_block_price(row, stake):
+    lo=row.get("StrategicPriceLow"); hi=row.get("StrategicPriceHigh"); ref=row.get("StrategicReferenceStake")
+    if pd.isna(lo) or pd.isna(hi): return np.nan
+    ref=float(ref) if pd.notna(ref) and ref>0 else .325
+    # 5% block starts near low end; reference/control block approaches high end.
+    x=np.clip((float(stake)-.05)/max(ref-.05,.01),0,1)
+    return float(lo)+(float(hi)-float(lo))*(x**0.75)
+for stake,label in [(.05,"5pct"),(.10,"10pct"),(.20,"20pct"),(.325,"32_5pct"),(.51,"51pct")]:
+    d[f"StrategicPrice_{label}"]=d.apply(lambda r: strategic_block_price(r,stake),axis=1)
 
 
 # Growth intelligence from historical Vnstock series.
@@ -294,7 +327,7 @@ d["AdjustedBVPS_Restructuring"] = d["AdjustedEquity_Restructuring"]/d["Shares"]
 key=["Price","ROE_Used","BVPS_Used","Equity","NPAT","NPL","CAR","NIM"]
 d["DataCoverage"]=d[key].notna().sum(axis=1)/len(key)
 
-summary_cols=["Ticker","PeerGroup","OwnershipType","Price","PB_Current","PTBV_Current","PE_Current","ROE_Used","ROA","NIM","NPL","CAR","CIR","LDR","CASA","BVPS_Used","TBVPS","COE","LTG","NormalizedROE_Used","JustifiedPB","PeerPB_Adjusted","HistoricalPBMedian","Fair_ResidualIncome","Fair_JustifiedPB","Fair_PeerPB","Fair_HistoricalPB","FairValue_Bear","FairValue_Base","FairValue_Bull","Upside_Base","ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore","FundamentalScore","InvestmentScore","FundamentalView","InvestmentView","QualityScore","ValueScore","RiskScore","CompositeScore","ValuationView","QualityView","DataCoverage","TotalAssets_Growth","GrossLoans_Growth","CustomerDeposits_Growth","NPAT_Growth","NetInterestIncome_Growth","ReportStatus","ReportStamp","ReportCoverage","CoreMissingCount","CoreMissing","DataAgeDays","QualityWarnings","CanExportOfficial","CanExportDraft","NormalizationFlags","TotalAssets","Equity","TangibleEquity","NPAT","NetInterestIncome","OperatingIncome","ProvisionExpense","GrossLoans","CustomerDeposits","Shares","RetrievedAt","DataType","SourceMode"]
+summary_cols=["Ticker","PeerGroup","OwnershipType","Price","PB_Current","PTBV_Current","PE_Current","ROE_Used","ROA","NIM","NPL","CAR","CIR","LDR","CASA","BVPS_Used","TBVPS","COE","LTG","NormalizedROE_Used","JustifiedPB","PeerPB_Adjusted","HistoricalPBMedian","Fair_ResidualIncome","Fair_JustifiedPB","Fair_PeerPB","Fair_HistoricalPB","FairValue_Bear","FairValue_Base","FairValue_Bull","Upside_Base","ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore","FundamentalScore","InvestmentScore","FundamentalView","InvestmentView","QualityScore","ValueScore","RiskScore","CompositeScore","ValuationView","QualityView","DataCoverage","TotalAssets_Growth","GrossLoans_Growth","CustomerDeposits_Growth","NPAT_Growth","NetInterestIncome_Growth","ReportStatus","ReportStamp","ReportCoverage","CoreMissingCount","CoreMissing","DataAgeDays","QualityWarnings","CanExportOfficial","CanExportDraft","NormalizationFlags","TotalAssets","Equity","TangibleEquity","NPAT","NetInterestIncome","OperatingIncome","ProvisionExpense","GrossLoans","CustomerDeposits","Shares","RetrievedAt","DataType","SourceMode","StrategicIntelligenceType","StrategicPriceLow","StrategicPriceHigh","StrategicPriceMid","StrategicReferenceStake","StrategicAsOfDate","StrategicSource","StrategicConfidence","StrategicNote","StrategicPremiumLow","StrategicPremiumHigh","StrategicVsFundamentalLow","StrategicVsFundamentalHigh","StrategicPrice_5pct","StrategicPrice_10pct","StrategicPrice_20pct","StrategicPrice_32_5pct","StrategicPrice_51pct"]
 for c in summary_cols:
     if c not in d:d[c]=np.nan
 summary=d[summary_cols].sort_values("CompositeScore",ascending=False)
@@ -303,7 +336,12 @@ methods.to_csv(OUT/"valuation_methods.csv",index=False,encoding="utf-8-sig")
 mna.to_csv(OUT/"mna_baseline.csv",index=False,encoding="utf-8-sig")
 
 # Peer summary.
-peer_summary=summary.groupby("PeerGroup",dropna=False).agg(Banks=("Ticker","count"),MedianPB=("PB_Current","median"),MedianPTBV=("PTBV_Current","median"),MedianROE=("ROE_Used","median"),MedianNPL=("NPL","median"),MedianUpside=("Upside_Base","median")).reset_index()
+peer_summary=summary.groupby("PeerGroup",dropna=False).agg(
+    Banks=("Ticker","count"),MedianPB=("PB_Current","median"),MedianPTBV=("PTBV_Current","median"),MedianPE=("PE_Current","median"),
+    MedianROE=("ROE_Used","median"),MedianROA=("ROA","median"),MedianNIM=("NIM","median"),MedianNPL=("NPL","median"),
+    MedianCAR=("CAR","median"),MedianCIR=("CIR","median"),MedianLDR=("LDR","median"),MedianCASA=("CASA","median"),
+    MedianUpside=("Upside_Base","median"),MedianInvestmentScore=("InvestmentScore","median")
+).reset_index()
 peer_summary.to_csv(OUT/"peer_summary.csv",index=False,encoding="utf-8-sig")
 
 meta={

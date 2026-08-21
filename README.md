@@ -170,3 +170,11 @@ Từ bản tối ưu này, không cần chạy full refresh cho mọi thay đổ
 Giá cổ phiếu mặc định chỉ lấy lại từ 7 ngày trước ngày cuối cùng đã lưu để vừa nhanh vừa có overlap sửa dữ liệu. BCTC/history mới được merge vào dữ liệu cũ và deduplicate, không xóa lịch sử của các ngân hàng không được refresh.
 
 Mặc định BAT dùng 4 worker. Nếu Vnstock báo rate limit, giảm `VNSTOCK_WORKERS=4` xuống 2 trong BAT tương ứng.
+
+## Nâng cấp lớp định giá chiến lược / M&A (2026-08-21)
+- Tách 3 lớp giá trị: thị trường, giá trị cơ bản, giá trị chiến lược/M&A.
+- Thêm `config/market_intelligence.csv`; dữ liệu market intelligence không ghi đè fair value fundamental.
+- STB được cấu hình vùng market intelligence 80.000-100.000 đồng/cp theo thông tin người dùng cung cấp, gắn nhãn USER_MARKET_INTELLIGENCE.
+- Thêm đường cong giá lô chiến lược theo quy mô sở hữu, peer benchmarking mở rộng và đưa peer median vào báo cáo.
+- Sửa hiển thị đơn vị giá nội bộ nghìn đồng/cp thành đồng/cp trên app/báo cáo.
+- Biểu đồ CAR bỏ các điểm 0/âm không hợp lệ thay vì nối về 0.

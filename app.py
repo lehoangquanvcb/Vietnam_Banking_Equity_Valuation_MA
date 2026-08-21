@@ -50,7 +50,7 @@ def num(x):
         v=float(x); return v if np.isfinite(v) else None
     except:return None
 def pct(x): return "N/A" if num(x) is None else f"{num(x):.1%}"
-def money(x): return "N/A" if num(x) is None else f"{num(x):,.0f}"
+def money(x): return "N/A" if num(x) is None else f"{num(x)*1000:,.0f} đồng/cp"
 def mult(x,d=2): return "N/A" if num(x) is None else f"{num(x):.{d}f}x"
 def fmtbn(x): return "N/A" if num(x) is None else f"{num(x)/1e9:,.0f} tỷ"
 def safe(df): return df.copy().replace([np.inf,-np.inf],np.nan)
@@ -102,7 +102,7 @@ if summary.empty:
     st.stop()
 
 # Normalize numeric columns.
-text_cols={"Ticker","PeerGroup","OwnershipType","ValuationView","QualityView","FundamentalView","InvestmentView","RetrievedAt","DataType","SourceMode"}
+text_cols={"Ticker","PeerGroup","OwnershipType","ValuationView","QualityView","FundamentalView","InvestmentView","RetrievedAt","DataType","SourceMode","StrategicIntelligenceType","StrategicAsOfDate","StrategicSource","StrategicConfidence","StrategicNote"}
 for c in summary.columns:
     if c not in text_cols:
         summary[c]=pd.to_numeric(summary[c],errors="coerce")
@@ -132,6 +132,9 @@ h6.metric("Điểm đầu tư",f"{row.InvestmentScore:.0f}/100" if num(row.get("
 status_icon={"CHÍNH THỨC":"✅","BẢN NHÁP":"⚠️","CHƯA ĐỦ DỮ LIỆU":"⛔"}.get(qa["ReportStatus"],"ℹ️")
 st.markdown(f"""<div class="analysis-box"><b>{status_icon} TRẠNG THÁI BÁO CÁO: {qa["ReportStatus"]}</b> · Độ phủ kiểm soát {qa["ReportCoverage"]:.0%}<br><br><b>NHẬN ĐỊNH CHÍNH</b><br>{executive_summary(row.to_dict())}</div>""",unsafe_allow_html=True)
 
+if num(row.get("StrategicPriceLow")) is not None:
+    st.info(f"GIÁ TRỊ CHIẾN LƯỢC / M&A (MARKET INTELLIGENCE): {money(row.StrategicPriceLow)} - {money(row.StrategicPriceHigh)}. Đây là lớp giá trị giao dịch riêng, không thay thế giá trị cơ bản {money(row.FairValue_Base)}.")
+
 tabs=st.tabs([
     "Tổng quan thị trường","Sàng lọc cổ phiếu","Hồ sơ ngân hàng","Định giá cổ phiếu",
     "So sánh tương quan","M&A / Quyền kiểm soát","Tái cơ cấu","PPA & Goodwill","Báo cáo & Quản trị"
@@ -160,7 +163,7 @@ with tabs[0]:
     if not presentation:
         cols=["Ticker","PeerGroup","Price","FairValue_Base","Upside_Base","PB_Current","ROE_Used","NPL","CAR","InvestmentScore","InvestmentView"]
         st.dataframe(safe(summary[cols].sort_values("InvestmentScore",ascending=False)).style.format({
-            "Price":"{:,.0f}","FairValue_Base":"{:,.0f}","Upside_Base":"{:.1%}","PB_Current":"{:.2f}x","ROE_Used":"{:.1%}","NPL":"{:.1%}","CAR":"{:.1%}","InvestmentScore":"{:.0f}"
+            "Price":lambda v: f"{v*1000:,.0f}","FairValue_Base":lambda v: f"{v*1000:,.0f}","Upside_Base":"{:.1%}","PB_Current":"{:.2f}x","ROE_Used":"{:.1%}","NPL":"{:.1%}","CAR":"{:.1%}","InvestmentScore":"{:.0f}"
         }),hide_index=True,use_container_width=True,height=400)
 
 with tabs[1]:
@@ -176,7 +179,7 @@ with tabs[1]:
     z=z[(z.ROE_Used>=minroe)&(z.PB_Current<=maxpb)&(z.InvestmentScore>=minscore)]
     cols=["Ticker","PeerGroup","Price","FairValue_Base","Upside_Base","PB_Current","PTBV_Current","PE_Current","ROE_Used","NIM","NPL","CAR","CASA","InvestmentScore","InvestmentView"]
     st.dataframe(safe(z[cols].sort_values("InvestmentScore",ascending=False)).style.format({
-        "Price":"{:,.0f}","FairValue_Base":"{:,.0f}","Upside_Base":"{:.1%}","PB_Current":"{:.2f}x","PTBV_Current":"{:.2f}x","PE_Current":"{:.1f}x","ROE_Used":"{:.1%}","NIM":"{:.1%}","NPL":"{:.1%}","CAR":"{:.1%}","CASA":"{:.1%}","InvestmentScore":"{:.0f}"
+        "Price":lambda v: f"{v*1000:,.0f}","FairValue_Base":lambda v: f"{v*1000:,.0f}","Upside_Base":"{:.1%}","PB_Current":"{:.2f}x","PTBV_Current":"{:.2f}x","PE_Current":"{:.1f}x","ROE_Used":"{:.1%}","NIM":"{:.1%}","NPL":"{:.1%}","CAR":"{:.1%}","CASA":"{:.1%}","InvestmentScore":"{:.0f}"
     }),hide_index=True,use_container_width=True)
 
 with tabs[2]:
@@ -233,8 +236,18 @@ with tabs[3]:
         st.plotly_chart(fig,use_container_width=True)
         if not presentation:
             st.dataframe(m[["Method","FairValuePerShare","MarketPrice","Upside","DataType"]].style.format({
-                "FairValuePerShare":"{:,.0f}","MarketPrice":"{:,.0f}","Upside":"{:.1%}"
+                "FairValuePerShare":lambda v: f"{v*1000:,.0f}","MarketPrice":lambda v: f"{v*1000:,.0f}","Upside":"{:.1%}"
             }),hide_index=True,use_container_width=True)
+
+    st.markdown("### Ba lớp giá trị: thị trường - cơ bản - chiến lược")
+    bridge=pd.DataFrame([
+        {"Lớp giá trị":"Giá thị trường","Giá thấp":row.Price,"Giá cao":row.Price,"Ý nghĩa":"Giá giao dịch trên sàn"},
+        {"Lớp giá trị":"Giá trị cơ bản","Giá thấp":row.FairValue_Bear,"Giá cao":row.FairValue_Bull,"Ý nghĩa":"Residual Income + P/B + peer + lịch sử"},
+        {"Lớp giá trị":"Giá trị chiến lược/M&A","Giá thấp":row.get("StrategicPriceLow"),"Giá cao":row.get("StrategicPriceHigh"),"Ý nghĩa":"Market intelligence / block premium / quyền kiểm soát"},
+    ])
+    st.dataframe(bridge.style.format({"Giá thấp":lambda v: f"{v*1000:,.0f}","Giá cao":lambda v: f"{v*1000:,.0f}"},na_rep="N/A"),hide_index=True,use_container_width=True)
+    if num(row.get("StrategicPriceLow")) is not None:
+        st.warning(f"Khoảng {money(row.StrategicPriceLow)} - {money(row.StrategicPriceHigh)} được gắn nhãn {row.get('StrategicSource','MARKET_INTELLIGENCE')} ({row.get('StrategicConfidence','N/A')}). Không dùng khoảng này để ép ngược mô hình fundamental; chênh lệch được giải thích bằng scarcity/control premium, optionality tái cơ cấu và giá trị chiến lược của lô cổ phần.")
 
     st.markdown("### Giả định trọng yếu")
     st.write(f"COE **{pct(row.COE)}** · Tăng trưởng dài hạn **{pct(row.LTG)}** · ROE chuẩn hóa **{pct(row.NormalizedROE_Used)}** · P/B hợp lý **{mult(row.JustifiedPB)}**")
@@ -247,6 +260,16 @@ with tabs[4]:
     st.subheader("So sánh tương quan")
     if len(peer):
         st.dataframe(peer.style.format({"MedianPB":"{:.2f}x","MedianPTBV":"{:.2f}x","MedianROE":"{:.1%}","MedianNPL":"{:.1%}","MedianUpside":"{:.1%}"}),hide_index=True,use_container_width=True)
+    if peer_row:
+        st.markdown(f"### {selected} so với trung vị nhóm {row.PeerGroup}")
+        metrics=[("ROE","ROE_Used","MedianROE",True),("ROA","ROA","MedianROA",True),("NIM","NIM","MedianNIM",True),("NPL","NPL","MedianNPL",False),("CAR","CAR","MedianCAR",True),("CASA","CASA","MedianCASA",True),("CIR","CIR","MedianCIR",False),("P/B","PB_Current","MedianPB",False)]
+        rr=[]
+        for label,col,pcol,higher in metrics:
+            v=num(row.get(col)); pv=num(peer_row.get(pcol)); gap=(v-pv) if v is not None and pv is not None else None
+            verdict="N/A" if gap is None else ("Tốt hơn peer" if (gap>0)==higher else "Kém hơn peer" if gap!=0 else "Ngang peer")
+            rr.append({"Chỉ tiêu":label,selected:v,"Trung vị peer":pv,"Chênh lệch":gap,"Đánh giá":verdict})
+        peer_cmp=pd.DataFrame(rr)
+        st.dataframe(peer_cmp.style.format({selected:"{:.2%}","Trung vị peer":"{:.2%}","Chênh lệch":"{:+.2%}"},na_rep="N/A"),hide_index=True,use_container_width=True)
     q=summary.dropna(subset=["ROE_Used","PB_Current"])
     fig=px.scatter(q,x="ROE_Used",y="PB_Current",color="PeerGroup",text="Ticker",size="TotalAssets",hover_data=["NPL","CAR","Upside_Base","InvestmentScore"],title="ROE - P/B: chất lượng sinh lời và định giá")
     fig.update_traces(textposition="top center"); fig.update_xaxes(tickformat=".0%"); fig.update_layout(height=560)
@@ -271,6 +294,11 @@ with tabs[5]:
     x1.metric("Giá trị độc lập/cp",money(row.FairValue_Base)); x2.metric("Giá chào mua/cp",money(offer_ps)); x3.metric("P/B giao dịch",mult(implied_pb)); x4.metric("P/TBV giao dịch",mult(implied_ptbv)); x5.metric("Giá trị giao dịch",fmtbn(consideration))
     st.markdown(f"""<div class="analysis-box"><b>HÀM Ý THƯƠNG VỤ</b><br>{mna_text(row.to_dict(),b)}</div>""",unsafe_allow_html=True)
     st.warning("Đây là mô phỏng giá trị quyền kiểm soát, không phải giá chào mua quan sát. Control premium, synergy, integration cost và recapitalization là ASSUMPTION.")
+    if num(row.get("StrategicPriceLow")) is not None:
+        st.markdown("### Đường cong giá lô chiến lược")
+        curve=pd.DataFrame({"Quy mô lô":["5%","10%","20%","32,5%","51%"],"Giá tham chiếu/cp":[(num(row.get("StrategicPrice_5pct")) or np.nan)*1000,(num(row.get("StrategicPrice_10pct")) or np.nan)*1000,(num(row.get("StrategicPrice_20pct")) or np.nan)*1000,(num(row.get("StrategicPrice_32_5pct")) or np.nan)*1000,(num(row.get("StrategicPrice_51pct")) or np.nan)*1000]})
+        st.plotly_chart(px.line(curve,x="Quy mô lô",y="Giá tham chiếu/cp",markers=True,title="Giá trị chiến lược tăng theo quy mô lô/quyền kiểm soát"),use_container_width=True)
+        st.caption(f"Nguồn intelligence: {row.get('StrategicSource','N/A')} · ngày {row.get('StrategicAsOfDate','N/A')} · độ tin cậy {row.get('StrategicConfidence','N/A')}. Đây không phải giá giao dịch đã xác nhận.")
     if len(precedents.dropna(how="all")):
         st.markdown("### Giao dịch so sánh")
         st.dataframe(precedents,hide_index=True,use_container_width=True)

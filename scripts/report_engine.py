@@ -84,6 +84,8 @@ def _metric_history(hist,ticker,metrics):
     if x.empty:return x
     x["Value"]=pd.to_numeric(x["Value"],errors="coerce")
     x=x.dropna(subset=["Value"])
+    if "CAR" in metrics:
+        x=x[~((x["Metric"].astype(str)=="CAR") & (x["Value"]<=0))]
     x["_sort"]=x["Period"].astype(str).map(_period_sort)
     return x.sort_values("_sort")
 
@@ -132,8 +134,9 @@ def _chart_valuation(methods,row):
     else:
         m["FairValuePerShare"]=pd.to_numeric(m["FairValuePerShare"],errors="coerce")
         m=m.dropna(subset=["FairValuePerShare"])
+        m["FairValuePerShare"]=m["FairValuePerShare"]*1000
         ax.bar(m["Method"],m["FairValuePerShare"])
-        if n(row.get("Price")) is not None: ax.axhline(n(row.get("Price")),linestyle="--",label="Giá thị trường")
+        if n(row.get("Price")) is not None: ax.axhline(n(row.get("Price"))*1000,linestyle="--",label="Giá thị trường")
         ax.set_title("Giá trị hợp lý theo phương pháp"); ax.set_ylabel("VND/cp"); ax.tick_params(axis="x",rotation=20,labelsize=8)
         ax.legend(fontsize=8)
     return _fig_to_png(fig)
@@ -209,8 +212,9 @@ def _draw_header(c,title,ticker,page,font,bold,stamp=None):
         c.drawCentredString(0,0,stamp)
         c.restoreState()
     c.setFillColor(colors.HexColor("#555555")); c.setFont(font,6.8)
-    c.drawString(MARGIN,7*mm,"Nguồn: Vnstock/BCTC và mô hình định giá nội bộ. ACTUAL/CALCULATED/ASSUMPTION được phân tách theo lineage.")
-    c.drawRightString(PAGE_W-MARGIN,7*mm,"Tài liệu phân tích - không phải khuyến nghị đầu tư/chào mua.")
+    c.setFont(font,6.2)
+    c.drawString(MARGIN,7*mm,"Nguồn: Vnstock/BCTC + mô hình nội bộ. ACTUAL/CALCULATED/ASSUMPTION tách riêng.")
+    c.drawRightString(PAGE_W-MARGIN,7*mm,"Tham khảo - không phải khuyến nghị đầu tư/chào mua.")
 
 def _draw_image(c,bio,x,y,w,h):
     from reportlab.lib.utils import ImageReader
@@ -259,6 +263,8 @@ def generate_pdf_bytes(root,ticker,mode="investment"):
     _kpi_table(c,[("Giá thị trường",money(row.get("Price"))),("Giá trị hợp lý",money(row.get("FairValue_Base"))),("Tiềm năng",pct(row.get("Upside_Base"))),("P/B hiện tại",mult(row.get("PB_Current"))),("ROE",pct(row.get("ROE_Used"))),("Điểm đầu tư",f"{n(row.get('InvestmentScore')):.0f}/100" if n(row.get("InvestmentScore")) is not None else "N/A")],st,PAGE_H-32*mm)
     _draw_image(c,_chart_scores(row),MARGIN,31*mm,175*mm,66*mm)
     _draw_para(c,f"Trạng thái báo cáo: {qa['ReportStatus']} | Độ phủ kiểm soát: {qa['ReportCoverage']:.0%} | Thiếu chỉ tiêu lõi: {qa['CoreMissingCount']}",st["small"],MARGIN,27*mm,175*mm,12*mm)
+    if n(row.get("StrategicPriceLow")) is not None:
+        _draw_para(c,f"Market Intelligence/M&A: {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))} | Nguồn: {row.get('StrategicSource','N/A')} | Không phải fair value fundamental.",st["small"],MARGIN,20*mm,175*mm,12*mm)
     c.showPage()
 
     # Page 2
@@ -303,7 +309,17 @@ def generate_pdf_bytes(root,ticker,mode="investment"):
     _draw_header(c,title,ticker,7,font,bold,stamp); y=PAGE_H-29*mm
     y=_draw_para(c,"7. ĐỊNH GIÁ TƯƠNG ĐỐI & NHÓM SO SÁNH",st["h1"],MARGIN,y,170*mm,20*mm)
     y=_draw_para(c,valuation_text(row),st["body"],MARGIN,y-2*mm,175*mm,43*mm)
-    _draw_image(c,_chart_peer(d["summary"],ticker),MARGIN,70*mm,175*mm,108*mm)
+    _draw_image(c,_chart_peer(d["summary"],ticker),MARGIN,82*mm,175*mm,95*mm)
+    if peer_row:
+        pdata=[["Chỉ tiêu",ticker,"Peer median"],
+               ["ROE",pct(row.get("ROE_Used")),pct(peer_row.get("MedianROE"))],
+               ["NIM",pct(row.get("NIM")),pct(peer_row.get("MedianNIM"))],
+               ["NPL",pct(row.get("NPL")),pct(peer_row.get("MedianNPL"))],
+               ["CAR",pct(row.get("CAR")),pct(peer_row.get("MedianCAR"))],
+               ["CASA",pct(row.get("CASA")),pct(peer_row.get("MedianCASA"))],
+               ["P/B",mult(row.get("PB_Current")),mult(peer_row.get("MedianPB"))]]
+        tt=Table(pdata,colWidths=[45*mm,45*mm,45*mm]); tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.grey),("FONTNAME",(0,0),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),7.5),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#EAF0F7"))]))
+        tw,th=tt.wrap(140*mm,60*mm); tt.drawOn(c,MARGIN,25*mm)
     c.showPage()
 
     # Page 8
@@ -316,9 +332,14 @@ def generate_pdf_bytes(root,ticker,mode="investment"):
             t=Table(data,colWidths=[60*mm,65*mm]); t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.4,colors.grey),("FONTNAME",(0,0),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),8.5),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#F3F6FA"))]))
             tw,th=t.wrap(130*mm,100*mm); t.drawOn(c,MARGIN,y-th-10*mm)
     else:
-        y=_draw_para(c,"8. ĐỊNH GIÁ NỘI TẠI & FOOTBALL FIELD",st["h1"],MARGIN,y,170*mm,20*mm)
-        y=_draw_para(c,valuation_text(row),st["body"],MARGIN,y-2*mm,175*mm,43*mm)
-        _draw_image(c,_chart_valuation(d["methods"],row),MARGIN,69*mm,175*mm,110*mm)
+        y=_draw_para(c,"8. ĐỊNH GIÁ CƠ BẢN & GIÁ TRỊ CHIẾN LƯỢC",st["h1"],MARGIN,y,170*mm,20*mm)
+        y=_draw_para(c,valuation_text(row),st["body"],MARGIN,y-2*mm,175*mm,38*mm)
+        if n(row.get("StrategicPriceLow")) is not None:
+            strategic=(f"Lớp giá trị chiến lược/M&A được ghi nhận riêng ở {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}. "
+                       f"Nguồn: {row.get('StrategicSource','N/A')}; ngày {row.get('StrategicAsOfDate','N/A')}; confidence {row.get('StrategicConfidence','N/A')}. "
+                       "Khoảng này không được dùng để ép ngược giá trị cơ bản; chênh lệch cần được giải thích bằng quy mô lô, quyền kiểm soát, scarcity, tái cơ cấu và synergy.")
+            y=_draw_para(c,strategic,st["body"],MARGIN,y-2*mm,175*mm,42*mm)
+        _draw_image(c,_chart_valuation(d["methods"],row),MARGIN,69*mm,175*mm,95*mm)
     c.showPage()
 
     # Page 9

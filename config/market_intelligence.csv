@@ -1,0 +1,2 @@
+Ticker,IntelligenceType,LowPrice,HighPrice,ReferenceStake,AsOfDate,Source,Confidence,Note
+STB,STRATEGIC_ACCUMULATION,80,100,0.325,2026-08-21,USER_MARKET_INTELLIGENCE,MEDIUM,"Khoảng giá nhà đầu tư được cho là sẵn sàng mua gom; giá có thể tăng theo quy mô lô. Không phải giao dịch đã xác nhận hay giá trị hợp lý fundamental."
