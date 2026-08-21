@@ -109,6 +109,10 @@ def latest_metric(df, ids=(), names=()):
         if vc:
             vals=pd.to_numeric(z[vc],errors="coerce").dropna()
             if len(vals): return float(vals.iloc[-1])
+            # Long-format Vnstock tables may have blank values for some ratios.
+            # Never fall through to metadata columns such as order/level, which can
+            # otherwise be mistaken for EPS/BVPS.
+            continue
         # wide layout: choose latest period-like numeric column
         for _,r in z.iterrows():
             vals=[]
@@ -169,9 +173,9 @@ METRICS = {
 }
 BS_METRICS = {
     "TotalAssets": (["BS_TOTAL_ASSETS"],["total assets"]),
-    "GrossLoans": (["BS_CUSTOMER_LOANS","BS_LOANS_TO_CUSTOMERS","BS_LOANS_AND_ADVANCES_TO_CUSTOMERS"],["loans to customers","customer loans","loans and advances to customers"]),
+    "GrossLoans": (["BS_LOANS_TO_CUSTOMERS_GROSS","BS_CUSTOMER_LOANS","BS_LOANS_TO_CUSTOMERS","BS_LOANS_AND_ADVANCES_TO_CUSTOMERS"],["loans to customers gross","loans to customers","customer loans","loans and advances to customers"]),
     "CustomerDeposits": (["BS_CUSTOMER_DEPOSITS"],["customer deposits","deposits from customers"]),
-    "Equity": (["BS_TOTAL_EQUITY","BS_OWNERS_EQUITY"],["total equity","owners equity","shareholders equity"]),
+    "Equity": (["BS_EQUITY","BS_TOTAL_EQUITY","BS_OWNERS_EQUITY"],["equity","total equity","owners equity","shareholders equity"]),
     "IntangibleAssets": (["BS_INTANGIBLE_ASSETS"],["intangible assets"]),
 }
 IS_METRICS = {
@@ -283,6 +287,42 @@ def fetch_one(ticker):
     return snap,hist
 
 
+
+def load_raw_bank(ticker):
+    """Rebuild one bank snapshot from the latest successfully saved Vnstock raw CSVs.
+
+    This is a resilience path only: it preserves the last real Vnstock fundamentals when
+    a later API call fails (for example a vnstock/pandas MultiIndex compatibility error).
+    It never manufactures accounting values.
+    """
+    def raw(name):
+        path=RAW/f"{ticker}_{name}.csv"
+        try:
+            return pd.read_csv(path) if path.exists() else pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
+    health=raw("health"); ratio_q=raw("ratio_q"); bs_q=raw("balance_q"); is_q=raw("income_q"); ratio_y=raw("ratio_y")
+    if all(x.empty for x in (health,ratio_q,bs_q,is_q,ratio_y)):
+        return None, []
+    snap={"Ticker":ticker,"RetrievedAt":now(),"DataType":"ACTUAL_CACHED","SourceMode":"VNSTOCK_BRONZE_RAW_CACHE",
+          "ParserLog":"API_ERROR -> rebuilt from last successful Vnstock raw CSV"}
+    for m,(ids,names) in METRICS.items():
+        v=latest_metric(health,ids,names)
+        if pd.isna(v): v=latest_metric(ratio_q,ids,names)
+        if pd.isna(v): v=latest_metric(ratio_y,ids,names)
+        snap[m]=v
+    for m,(ids,names) in BS_METRICS.items(): snap[m]=latest_metric(bs_q,ids,names)
+    for m,(ids,names) in IS_METRICS.items(): snap[m]=latest_metric(is_q,ids,names)
+    for m in ["ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA"]:
+        v=snap.get(m)
+        if pd.notna(v) and abs(v)>1.5 and abs(v)<=100: snap[m]=v/100.0
+    snap["TangibleEquity"] = snap.get("Equity") - snap.get("IntangibleAssets") if pd.notna(snap.get("Equity")) and pd.notna(snap.get("IntangibleAssets")) else snap.get("Equity")
+    hist=[]
+    for m,(ids,names) in METRICS.items(): hist += history_metric(ratio_q,ticker,m,ids,names)
+    for m,(ids,names) in BS_METRICS.items(): hist += history_metric(bs_q,ticker,m,ids,names)
+    for m,(ids,names) in IS_METRICS.items(): hist += history_metric(is_q,ticker,m,ids,names)
+    return snap,hist
+
 def fetch_price(ticker, start_date="2021-01-01"):
     try:
         m=Market().equity(ticker)
@@ -383,6 +423,10 @@ def main():
                 return t,snap,hist,"OK",str(snap.get("ParserLog",""))[:500]
             except Exception as exc:
                 msg=f"{type(exc).__name__}: {exc}"
+                cached,cached_hist=load_raw_bank(t)
+                if cached is not None:
+                    cached["ParserLog"]=f"API_ERROR:{msg[:220]} || RAW_CACHE:OK"
+                    return t,cached,cached_hist,"CACHED",msg[:500]
                 return t,error_snapshot(t,msg),[],"ERROR",msg[:500]
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures={ex.submit(fund_job,t):t for t in selected}

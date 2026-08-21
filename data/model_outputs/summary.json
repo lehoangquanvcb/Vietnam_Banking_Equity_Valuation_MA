@@ -1,9 +1,9 @@
 {
   "status": "OK",
   "banks": 20,
-  "banks_with_fair_value": 0,
+  "banks_with_fair_value": 20,
   "banks_with_price": 20,
-  "median_upside": null,
+  "median_upside": 0.16368362740106512,
   "methodology": [
     "Residual Income",
     "Justified P/B",

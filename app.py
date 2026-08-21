@@ -292,7 +292,8 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader(f"Phân bổ giá mua (PPA) & Goodwill - {selected}")
-    default_cons=num(b.get("IllustrativeConsideration")) if mna_row else 0
+    # Do not reuse the short variable `b` here: it is overwritten by Streamlit column objects in the previous tab.
+    default_cons=num(mna_row.get("IllustrativeConsideration")) if isinstance(mna_row, dict) else 0
     consideration_bn=st.number_input("Giá mua (tỷ đồng)",min_value=0.0,value=float(default_cons/1e9 if default_cons else 0),step=500.0)
     c1,c2,c3=st.columns(3)
     loan_mark=c1.slider("Điều chỉnh FV danh mục cho vay / Dư nợ",-0.10,.05,-float(cfg.get("credit_mark_pct_gross_loans",.02)),.005)
