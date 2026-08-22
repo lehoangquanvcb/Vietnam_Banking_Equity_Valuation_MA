@@ -500,7 +500,7 @@ def _flow_table(data,font,bold,col_widths=None,font_size=7.5,header=True):
     t.setStyle(TableStyle(style))
     return t
 
-def generate_pdf_bytes(root,ticker,mode="investment"):
+def generate_pdf_bytes(root,ticker,mode="integrated"):
     """PDF dạng flow: tự dồn trang, không ép mỗi mục một trang."""
     d,row,peer_row,mna_row=_report_context(root,ticker)
     font,bold=_register_pdf_fonts()
@@ -601,60 +601,31 @@ def generate_pdf_bytes(root,ticker,mode="investment"):
         story.append(_flow_table(pdata,font,bold,[30*mm,35*mm,52*mm,52*mm],7.4))
         story.append(Spacer(1,3*mm))
 
-    # 8
-    if mode=="mna":
-        section("8. GIÁ TRỊ QUYỀN KIỂM SOÁT & MÔ PHỎNG M&A",mna_text(row,mna_row))
-        if mna_row:
-            data=[
-                ["Chỉ tiêu","Giá trị"],
-                ["Giá trị độc lập",bn(mna_row.get("StandaloneEquityValue"))],
-                ["Giá trị hiện tại của cộng hưởng",bn(mna_row.get("PV_Synergies"))],
-                ["Chi phí tích hợp",bn(mna_row.get("IntegrationCost"))],
-                ["Giá trị thanh toán",bn(mna_row.get("IllustrativeConsideration"))],
-                ["P/B giao dịch",mult(mna_row.get("ImpliedPB"))],
-                ["P/TBV giao dịch",mult(mna_row.get("ImpliedPTBV"))],
-            ]
-            story.append(_flow_table(data,font,bold,[90*mm,80*mm],8))
-    else:
-        section("8. ĐỊNH GIÁ CƠ BẢN & GIÁ TRỊ CHIẾN LƯỢC",valuation_text(row,peer_row))
-        if n(row.get("StrategicPriceLow")) is not None:
-            story.append(P(
-                f"Lớp giá trị chiến lược/M&A được ghi nhận riêng ở {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}. "
-                f"Nguồn: {row.get('StrategicSource','N/A')}; ngày {row.get('StrategicAsOfDate','N/A')}; mức độ tin cậy {row.get('StrategicConfidence','N/A')}. "
-                "Khoảng này không được dùng để ép ngược giá trị cơ bản; chênh lệch cần được giải thích bằng quy mô lô, quyền kiểm soát, tính khan hiếm, tái cơ cấu và giá trị cộng hưởng.",
-                body
-            ))
-        chart(_chart_valuation(d["methods"],row,d["summary"]))
+    # 8 - Báo cáo hợp nhất: định giá + M&A / quyền kiểm soát
+    section("8. ĐỊNH GIÁ CƠ BẢN, GIÁ TRỊ CHIẾN LƯỢC & QUYỀN KIỂM SOÁT",
+            valuation_text(row,peer_row) + " " + mna_text(row,mna_row))
+    if n(row.get("StrategicPriceLow")) is not None:
+        story.append(P(
+            f"Lớp giá trị chiến lược/M&A (nếu có dữ liệu riêng cho {ticker}) được trình bày tách biệt với giá trị cơ bản. "
+            f"Nguồn: {row.get('StrategicSource','N/A')}; ngày {row.get('StrategicAsOfDate','N/A')}; mức độ tin cậy {row.get('StrategicConfidence','N/A')}. "
+            "Thông tin đặc thù của một ngân hàng hoặc một thương vụ không được mặc định áp dụng cho các ngân hàng khác.", body))
+    chart(_chart_valuation(d["methods"],row,d["summary"]))
 
-    # 9
-    if mode=="mna":
-        section("9. PPA, LỢI THẾ THƯƠNG MẠI & TÁC ĐỘNG TÁI CƠ CẤU",
-                "Trong phương pháp mua lại, giá mua được phân bổ vào tài sản và nợ phải trả có thể xác định theo giá trị hợp lý. "
-                "Đối với ngân hàng, điều chỉnh rủi ro tín dụng danh mục cho vay, chứng khoán, nghĩa vụ ngoại bảng và tài sản vô hình liên quan đến khách hàng/tiền gửi cần được thẩm định riêng. "
-                "Lợi thế thương mại chỉ là phần chênh lệch còn lại. Nếu ngân hàng mục tiêu cần bổ sung vốn, phần vốn bổ sung phải được tách khỏi giá mua tối đa.")
-        chart(_chart_sensitivity(row))
-    else:
-        section("9. KIỂM TRA TÍNH HỢP LÝ 80.000-100.000 ĐỒNG/CP",
-                "Đối chiếu định lượng vùng giá chiến lược với thị giá, BVPS hiện tại/hậu xử lý, giá trị lô 32,5%, ước tính 63.250 tỷ đồng gốc+lãi liên quan và các nghiên cứu công khai. Đây là kiểm tra tính hợp lý kinh tế, không phải khẳng định giá giao dịch tương lai.")
-        if strategic_case.get("strategic_low") is not None:
-            lo=strategic_case["low"]; hi=strategic_case["high"]
-            data=[
-                ["Chỉ tiêu","80.000 đồng/cp","100.000 đồng/cp"],
-                ["Mức cao hơn thị giá",pct(lo.get("premium_to_market")),pct(hi.get("premium_to_market"))],
-                ["P/B trên BVPS hiện tại",mult(lo.get("implied_pb_current")),mult(hi.get("implied_pb_current"))],
-                ["P/B hậu xử lý (BVPS +10.000)",mult(lo.get("implied_pb_post_resolution")),mult(hi.get("implied_pb_post_resolution"))],
-                ["Giá trị lô 32,5%",bn((lo.get("block_consideration_bn") or 0)*1e9),bn((hi.get("block_consideration_bn") or 0)*1e9)],
-                ["Bao phủ 63.250 tỷ gốc+lãi",pct(lo.get("claim_recovery")),pct(hi.get("claim_recovery"))],
-                ["So với kịch bản cao công khai",pct(lo.get("premium_to_public_high")),pct(hi.get("premium_to_public_high"))],
-            ]
-            story.append(_flow_table(data,font,bold,[75*mm,48*mm,48*mm],7.4))
-            story.append(Spacer(1,3*mm))
-            story.append(P(
-                "80.000 đồng/cp là mức chiến lược tương đối dễ biện minh vì chỉ cao hơn nhẹ so với thị giá và nằm sát vùng kịch bản cao của định giá độc lập công khai. "
-                "100.000 đồng/cp là mức hợp lý có điều kiện: giá trị lô 32,5% tiến gần mức thu hồi đầy đủ 63.250 tỷ đồng, vì vậy cần xác suất xử lý cao cùng quyền ảnh hưởng và giá trị hậu tái cơ cấu.",
-                small
-            ))
-        chart(_chart_sensitivity(row))
+    # 9 - Hoàn toàn động theo ngân hàng; không hard-code STB, 80-100k hay lô 32,5%.
+    section("9. ĐỘ NHẠY ĐỊNH GIÁ, PPA & CÁC YẾU TỐ CÓ THỂ TẠO GIÁ TRỊ TRONG M&A",
+            "Phần này kiểm tra độ nhạy của giá trị cơ bản theo ROE chuẩn hóa và chi phí vốn chủ sở hữu (COE), đồng thời nêu các lớp giá trị có thể phát sinh trong một giao dịch M&A. "
+            "Giá giao dịch thực tế có thể khác giá trị cơ bản do quyền kiểm soát, quy mô lô, tính khan hiếm, cộng hưởng, yêu cầu bổ sung vốn, chất lượng tài sản và các điều chỉnh PPA. "
+            "Mọi mức giá, tỷ lệ sở hữu hoặc nghĩa vụ tài chính đặc thù chỉ được đưa vào khi có dữ liệu riêng của chính ngân hàng/thương vụ đang phân tích; hệ thống không sử dụng giả định của STB cho ngân hàng khác.")
+    chart(_chart_sensitivity(row))
+    if mna_row:
+        data=[["Chỉ tiêu M&A mô phỏng","Giá trị"],
+              ["Giá trị độc lập",bn(mna_row.get("StandaloneEquityValue"))],
+              ["Giá trị hiện tại của cộng hưởng",bn(mna_row.get("PV_Synergies"))],
+              ["Chi phí tích hợp",bn(mna_row.get("IntegrationCost"))],
+              ["Giá trị thanh toán mô phỏng",bn(mna_row.get("IllustrativeConsideration"))],
+              ["P/B giao dịch mô phỏng",mult(mna_row.get("ImpliedPB"))],
+              ["P/TBV giao dịch mô phỏng",mult(mna_row.get("ImpliedPTBV"))]]
+        story.append(_flow_table(data,font,bold,[90*mm,80*mm],8))
 
     # 10
     section("10. KẾT LUẬN, ĐỘNG LỰC & RỦI RO",executive_summary(row,peer_row))
@@ -789,7 +760,7 @@ def _normalize_docx_typography(doc):
                 r._element.rPr.rFonts.set(qn("w:eastAsia"),"Lato")
                 r.font.size=Pt(10)
 
-def generate_docx_bytes(root,ticker,mode="investment"):
+def generate_docx_bytes(root,ticker,mode="integrated"):
     d,row,peer_row,mna_row=_report_context(root,ticker)
     qa=assess_report_quality(row,d["cfg"],d["hist"],d["prices"])
     norm_flags=normalization_flags(row,d["cfg"],d["hist"] if False else d["prices"])
@@ -816,8 +787,8 @@ def generate_docx_bytes(root,ticker,mode="investment"):
             _chart_history(d["hist"],ticker,["LDR"],"Tỷ lệ cho vay trên tiền gửi (LDR)",True)]),
         ("6. VỐN, KHẢ NĂNG CHỐNG CHỊU & NĂNG LỰC TĂNG TRƯỞNG",capital_text(row,peer_row),_chart_history(d["hist"],ticker,["CAR"],"Xu hướng hệ số an toàn vốn (CAR)",True)),
         ("7. ĐỊNH GIÁ TƯƠNG ĐỐI & NHÓM SO SÁNH",valuation_text(row,peer_row),_chart_peer(d["summary"],ticker)),
-        ("8. GIÁ TRỊ QUYỀN KIỂM SOÁT & MÔ PHỎNG M&A" if mode=="mna" else "8. ĐỊNH GIÁ CƠ BẢN & KIỂM TRA GIÁ THÂU TÓM",mna_text(row,mna_row) if mode=="mna" else valuation_text(row,peer_row)+" "+strategic_case_text,_chart_valuation(d["methods"],row,d["summary"])),
-        ("9. PPA, GOODWILL & TÁC ĐỘNG TÁI CƠ CẤU" if mode=="mna" else "9. KIỂM TRA TÍNH HỢP LÝ 80.000–100.000 ĐỒNG/CP","Đối chiếu định lượng vùng giá chiến lược với thị giá, BVPS hiện tại/hậu xử lý, giá trị lô 32,5%, ước tính 63.250 tỷ đồng gốc+lãi liên quan và các benchmark nghiên cứu công khai. Đây là kiểm tra tính hợp lý kinh tế, không phải khẳng định giá giao dịch tương lai.",_chart_sensitivity(row)),
+        ("8. ĐỊNH GIÁ CƠ BẢN, GIÁ TRỊ CHIẾN LƯỢC & QUYỀN KIỂM SOÁT",valuation_text(row,peer_row)+" "+mna_text(row,mna_row),_chart_valuation(d["methods"],row,d["summary"])),
+        ("9. ĐỘ NHẠY ĐỊNH GIÁ, PPA & CÁC YẾU TỐ CÓ THỂ TẠO GIÁ TRỊ TRONG M&A","Kiểm tra độ nhạy giá trị cơ bản theo ROE chuẩn hóa và COE; đồng thời phân tích các lớp giá trị có thể phát sinh từ quyền kiểm soát, quy mô lô, tính khan hiếm, cộng hưởng, yêu cầu bổ sung vốn, chất lượng tài sản và PPA. Mức giá, tỷ lệ sở hữu hoặc nghĩa vụ tài chính đặc thù chỉ được đưa vào khi có dữ liệu riêng của chính ngân hàng/thương vụ đang phân tích; không sử dụng giả định của STB cho ngân hàng khác.",_chart_sensitivity(row)),
         ("10. KẾT LUẬN, ĐỘNG LỰC & RỦI RO",executive_summary(row,peer_row),None),
     ]
     for i,(head,body,chart) in enumerate(pages,1):

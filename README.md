@@ -276,3 +276,11 @@ Chạy `RUN_CREDIT_RATING_REPORT.bat`, nhập mã ngân hàng (KLB/STB/VCB...) v
 - Khởi tạo trạng thái XHTN ngay khi chọn ngân hàng; vào thẳng tab Báo cáo không còn phụ thuộc việc đã mở tab XHTN hay chưa.
 - Trạng thái xuất XHTN được merge với default an toàn.
 - Chuẩn hóa nốt nhãn `Bình quân 20 ngân hàng niêm yết`.
+
+
+## V7.3.3 - Báo cáo hợp nhất định giá & M&A
+- Gộp hai lựa chọn báo cáo Định giá cổ phiếu và M&A/Thâu tóm thành một báo cáo `Phân tích, định giá & M&A`.
+- Loại bỏ hoàn toàn nội dung hard-code `80.000-100.000 đồng/cp`, `lô 32,5%` và `63.250 tỷ đồng` khỏi mẫu báo cáo dùng chung.
+- Mục 8 tích hợp định giá cơ bản, giá trị chiến lược và quyền kiểm soát.
+- Mục 9 trở thành `Độ nhạy định giá, PPA & các yếu tố có thể tạo giá trị trong M&A`, dùng dữ liệu động của ngân hàng đang chọn.
+- Thông tin market intelligence đặc thù chỉ hiển thị khi chính ngân hàng đó có dữ liệu riêng; không lan sang ngân hàng khác.

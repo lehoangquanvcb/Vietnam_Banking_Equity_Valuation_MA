@@ -725,8 +725,8 @@ with tabs[9]:
     st.subheader("Báo cáo chính thức & Quản trị mô hình")
     st.markdown('<div class="report-box">',unsafe_allow_html=True)
     st.markdown(f"### Xuất báo cáo khoảng 10 trang A4 - {selected}")
-    report_mode=st.radio("Nội dung báo cáo",["Định giá cổ phiếu","M&A / Thâu tóm","Xếp hạng tín nhiệm"],horizontal=True)
-    rmode="mna" if report_mode.startswith("M&A") else "investment"
+    report_mode=st.radio("Nội dung báo cáo",["Phân tích, định giá & M&A","Xếp hạng tín nhiệm"],horizontal=True)
+    rmode="integrated"
     st.caption("Báo cáo và dashboard dùng cùng valuation outputs; không copy số liệu thủ công.")
     _fs=credit_rating_font_status() if report_mode=="Xếp hạng tín nhiệm" else report_font_status()
     if _fs.get("is_lato"):
@@ -754,7 +754,7 @@ with tabs[9]:
             else:
                 pdf_bytes=generate_pdf_bytes(ROOT,selected,rmode)
                 docx_bytes=generate_docx_bytes(ROOT,selected,rmode)
-                pdf_name=f"{selected}_Bao_cao_Phan_tich_Dinh_gia.pdf"; docx_name=f"{selected}_Bao_cao_Phan_tich_Dinh_gia.docx"
+                pdf_name=f"{selected}_Bao_cao_Phan_tich_Dinh_gia_MA.pdf"; docx_name=f"{selected}_Bao_cao_Phan_tich_Dinh_gia_MA.docx"
             b1,b2=st.columns(2)
             b1.download_button("📄 Tải PDF A4",pdf_bytes,file_name=pdf_name,mime="application/pdf",use_container_width=True)
             b2.download_button("📝 Tải Word",docx_bytes,file_name=docx_name,mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",use_container_width=True)
