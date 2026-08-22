@@ -7,20 +7,22 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, Table, TableStyle
+from reportlab.platypus import Paragraph, Table, TableStyle, SimpleDocTemplate, Image as RLImage, Spacer, KeepTogether, PageBreak
 
 from docx import Document
 from docx.shared import Mm, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
 
@@ -45,6 +47,17 @@ except Exception:
 
 PAGE_W,PAGE_H=A4
 MARGIN=16*mm
+
+# Chuẩn trình bày báo cáo: toàn bộ biểu đồ dùng Lato, cỡ 10.
+plt.rcParams.update({
+    "font.family": "Lato",
+    "font.size": 10,
+    "axes.titlesize": 10,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 10,
+    "ytick.labelsize": 10,
+    "legend.fontsize": 10,
+})
 
 METRIC_VI = {
     "TotalAssets":"Tổng tài sản",
@@ -72,6 +85,26 @@ METHOD_VI={
 }
 def _metric_vi(metric):
     return METRIC_VI.get(str(metric),str(metric))
+
+def _vi_num(x,d=0):
+    try:
+        x=float(x)
+        if not math.isfinite(x): return ""
+    except Exception:
+        return ""
+    s=f"{x:,.{d}f}"
+    return s.replace(",","§").replace(".",",").replace("§",".")
+
+def _fmt_pct_axis(v,pos=None):
+    return f"{_vi_num(v*100,1)}%"
+
+def _fmt_vnd_axis(v,pos=None):
+    return _vi_num(v,0)
+
+def _fmt_decimal_axis(v,pos=None):
+    av=abs(v)
+    d=0 if av>=100 else 1 if av>=10 else 2
+    return _vi_num(v,d)
 
 def _set_y_padding(ax, values, percent=False):
     vals=pd.to_numeric(pd.Series(values),errors="coerce").dropna()
@@ -105,25 +138,30 @@ def _load(root):
     }
 
 def _font_paths():
-    candidates=[]
+    """Find locally installed Lato. Font files are not distributed with this project."""
+    candidates = [
+        ("/usr/share/fonts/truetype/lato/Lato-Regular.ttf","/usr/share/fonts/truetype/lato/Lato-Bold.ttf"),
+        ("/usr/share/fonts/lato/Lato-Regular.ttf","/usr/share/fonts/lato/Lato-Bold.ttf"),
+        (str(Path.home()/".fonts/Lato-Regular.ttf"),str(Path.home()/".fonts/Lato-Bold.ttf")),
+        ("C:/Windows/Fonts/Lato-Regular.ttf","C:/Windows/Fonts/Lato-Bold.ttf"),
+        ("C:/Windows/Fonts/Lato.ttf","C:/Windows/Fonts/Lato-Bold.ttf"),
+    ]
     try:
-        import matplotlib
-        mpl_fonts=Path(matplotlib.get_data_path())/"fonts"/"ttf"
-        candidates.append((str(mpl_fonts/"DejaVuSans.ttf"),str(mpl_fonts/"DejaVuSans-Bold.ttf")))
+        from matplotlib import font_manager
+        reg = font_manager.findfont("Lato", fallback_to_default=False)
+        bold = font_manager.findfont(font_manager.FontProperties(family="Lato", weight="bold"), fallback_to_default=False)
+        candidates.insert(0,(reg,bold))
     except Exception:
         pass
-    candidates += [
-        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-        ("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf","/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
-    ]
     for a,b in candidates:
-        if Path(a).exists() and Path(b).exists(): return a,b
+        if a and b and Path(a).exists() and Path(b).exists():
+            return a,b
     return None,None
 
 def _register_pdf_fonts():
     reg,bold=_font_paths()
     if not reg or not bold:
-        raise RuntimeError("Không tìm thấy font Unicode để xuất PDF tiếng Việt; project cần matplotlib/DejaVu Sans.")
+        raise RuntimeError("Không tìm thấy font Lato để xuất PDF. Hãy cài Lato trên máy chạy report; project không đóng gói file font.")
     if "VNFont" not in pdfmetrics.getRegisteredFontNames(): pdfmetrics.registerFont(TTFont("VNFont",reg))
     if "VNFont-Bold" not in pdfmetrics.getRegisteredFontNames(): pdfmetrics.registerFont(TTFont("VNFont-Bold",bold))
     return "VNFont","VNFont-Bold"
@@ -167,7 +205,7 @@ def _set_quarter_ticks(ax, frames, max_ticks=10):
     ticks=uniq[::step]
     if uniq[-1] not in ticks: ticks.append(uniq[-1])
     ax.set_xticks(ticks)
-    ax.set_xticklabels([f"{pd.Timestamp(d).year}-Q{((pd.Timestamp(d).month-1)//3)+1}" for d in ticks],rotation=45,ha="right",fontsize=7)
+    ax.set_xticklabels([f"{pd.Timestamp(d).year}-Q{((pd.Timestamp(d).month-1)//3)+1}" for d in ticks],rotation=45,ha="right")
 
 def _metric_history(hist,ticker,metrics):
     if hist.empty:return pd.DataFrame()
@@ -202,49 +240,62 @@ def _fig_to_png(fig):
 
 def _chart_history(hist,ticker,metrics,title,percent=False):
     x=_metric_history(hist,ticker,metrics); pm=_peer_metric_history(hist,metrics)
-    fig,ax=plt.subplots(figsize=(7.4,3.0))
+    fig,ax=plt.subplots(figsize=(8.2,3.05))
     plotted=[]
+    balance_metrics={"TotalAssets","GrossLoans","CustomerDeposits","Equity","TangibleEquity"}
+    use_trillion=(not percent) and all(str(m) in balance_metrics for m in metrics)
+    scale=1e12 if use_trillion else 1.0
+
     if x.empty:
         ax.text(.5,.5,"Chưa có đủ dữ liệu lịch sử",ha="center",va="center"); ax.set_axis_off()
     else:
         for metric in metrics:
             label=_metric_vi(metric)
-            g=x[x["Metric"].astype(str).eq(str(metric))].sort_values("_date")
+            g=x[x["Metric"].astype(str).eq(str(metric))].sort_values("_date").copy()
             if g.empty: continue
-            plotted.extend(g["Value"].tolist())
-            line=ax.plot(g["_date"],g["Value"],marker="o",markersize=3.5,linewidth=1.8,label=f"{ticker} - {label}")[0]
-            pg=pm[pm["Metric"].astype(str).eq(str(metric))].sort_values("_date")
+            gy=g["Value"]/scale
+            plotted.extend(gy.tolist())
+            line=ax.plot(g["_date"],gy,marker="o",markersize=3.8,linewidth=1.9,label=f"{ticker} - {label}")[0]
+            pg=pm[pm["Metric"].astype(str).eq(str(metric))].sort_values("_date").copy()
             if len(pg):
-                plotted.extend(pg["Value"].tolist())
-                ax.plot(pg["_date"],pg["Value"],linestyle="--",linewidth=1.7,color=line.get_color(),alpha=.70,label=f"Bình quân 20 NH - {label}")
-        ax.set_title(title+" · so với bình quân 20 ngân hàng",fontsize=10.5)
-        ax.grid(alpha=.2); ax.legend(fontsize=6.8,ncol=2,loc="best")
+                py=pg["Value"]/scale
+                plotted.extend(py.tolist())
+                ax.plot(pg["_date"],py,linestyle="--",linewidth=1.8,color=line.get_color(),alpha=.72,label=f"Bình quân 20 NH - {label}")
+        ax.set_title(title+" - so với bình quân 20 ngân hàng")
+        ax.grid(alpha=.20)
+        ax.legend(fontsize=7.4,ncol=2,loc="best")
         _set_quarter_ticks(ax,[x,pm])
-        if percent: ax.yaxis.set_major_formatter(lambda v,pos:f"{v:.1%}")
+        if percent:
+            ax.yaxis.set_major_formatter(FuncFormatter(_fmt_pct_axis))
+        elif use_trillion:
+            ax.set_ylabel("Nghìn tỷ đồng")
+            ax.yaxis.set_major_formatter(FuncFormatter(_fmt_decimal_axis))
+        else:
+            ax.yaxis.set_major_formatter(FuncFormatter(_fmt_decimal_axis))
         _set_y_padding(ax,plotted,percent=percent)
         fig.tight_layout()
     return _fig_to_png(fig)
 
 
 def _chart_peer(summary,ticker):
-    fig,ax=plt.subplots(figsize=(7.4,3.4))
+    fig,ax=plt.subplots(figsize=(8.2,2.85))
     q=summary.dropna(subset=["ROE_Used","PB_Current"]).copy()
     if q.empty:
         ax.text(.5,.5,"Chưa có đủ dữ liệu peer",ha="center",va="center"); ax.set_axis_off()
     else:
         ax.scatter(q["ROE_Used"],q["PB_Current"],s=45,alpha=.75)
         for _,r in q.iterrows():
-            ax.annotate(str(r["Ticker"]),(r["ROE_Used"],r["PB_Current"]),fontsize=7,xytext=(3,3),textcoords="offset points")
+            ax.annotate(str(r["Ticker"]),(r["ROE_Used"],r["PB_Current"]),xytext=(3,3),textcoords="offset points")
         cur=q[q["Ticker"].astype(str).eq(str(ticker))]
         if len(cur): ax.scatter(cur["ROE_Used"],cur["PB_Current"],s=120,marker="*")
         mean_roe=pd.to_numeric(q["ROE_Used"],errors="coerce").mean(); mean_pb=pd.to_numeric(q["PB_Current"],errors="coerce").mean()
-        ax.axvline(mean_roe,linestyle="--",alpha=.65,label=f"ROE bình quân 20 NH {mean_roe:.1%}"); ax.axhline(mean_pb,linestyle="--",alpha=.65,label=f"P/B bình quân 20 NH {mean_pb:.2f}x")
-        ax.set_xlabel("ROE"); ax.set_ylabel("P/B (x)"); ax.set_title("Bản đồ ROE - P/B · benchmark bình quân 20 ngân hàng"); ax.legend(fontsize=7)
-        ax.xaxis.set_major_formatter(lambda v,pos:f"{v:.0%}"); ax.grid(alpha=.2)
+        ax.axvline(mean_roe,linestyle="--",alpha=.65,label=f"ROE bình quân 20 NH {_vi_num(mean_roe*100,1)}%"); ax.axhline(mean_pb,linestyle="--",alpha=.65,label=f"P/B bình quân 20 NH {_vi_num(mean_pb,2)}x")
+        ax.set_xlabel("ROE"); ax.set_ylabel("P/B (x)"); ax.set_title("Bản đồ ROE - P/B - so với bình quân 20 ngân hàng"); ax.legend(fontsize=7)
+        ax.xaxis.set_major_formatter(FuncFormatter(_fmt_pct_axis)); ax.yaxis.set_major_formatter(FuncFormatter(lambda v,pos:_vi_num(v,2))); ax.grid(alpha=.2)
     return _fig_to_png(fig)
 
 def _chart_valuation(methods,row,summary=None):
-    fig,ax=plt.subplots(figsize=(7.4,3.3))
+    fig,ax=plt.subplots(figsize=(8.2,2.75))
     m=methods[methods["Ticker"].astype(str).eq(str(row.get("Ticker")))].copy() if len(methods) else pd.DataFrame()
     if m.empty:
         ax.text(.5,.5,"Chưa có kết quả theo phương pháp",ha="center",va="center"); ax.set_axis_off()
@@ -255,19 +306,19 @@ def _chart_valuation(methods,row,summary=None):
         if n(row.get("Price")) is not None: ax.axhline(n(row.get("Price"))*1000,linestyle="--",label="Giá thị trường")
         if summary is not None and len(summary) and n(row.get("BVPS_Used")) is not None:
             mpb=pd.to_numeric(summary["PB_Current"],errors="coerce").mean()
-            if pd.notna(mpb): ax.axhline(mpb*n(row.get("BVPS_Used"))*1000,linestyle=":",linewidth=2,label=f"Giá hàm ý P/B bình quân 20 NH ({mpb:.2f}x)")
+            if pd.notna(mpb): ax.axhline(mpb*n(row.get("BVPS_Used"))*1000,linestyle=":",linewidth=2,label=f"Giá hàm ý P/B bình quân 20 NH ({_vi_num(mpb,2)}x)")
         slo=n(row.get("StrategicPriceLow")); shi=n(row.get("StrategicPriceHigh"))
         if slo is not None and shi is not None: ax.axhspan(slo*1000,shi*1000,alpha=.10,label="Vùng giá chiến lược/M&A")
-        ax.set_title("Giá trị theo phương pháp · so sánh bình quân 20 ngân hàng"); ax.set_ylabel("VND/cp"); ax.tick_params(axis="x",rotation=20,labelsize=8); ax.legend(fontsize=7)
+        ax.set_title("Giá trị theo phương pháp - so với bình quân 20 ngân hàng"); ax.set_ylabel("Đồng/cp"); ax.yaxis.set_major_formatter(FuncFormatter(_fmt_vnd_axis)); ax.tick_params(axis="x",rotation=20,labelsize=10); ax.legend(fontsize=7)
     return _fig_to_png(fig)
 
 
 def _chart_scores(row,summary=None):
     names=["Sinh lời","Tăng trưởng","Chất lượng TS","Nguồn vốn","An toàn vốn","Định giá"]
     score_cols=["ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore"]
-    vals=[row.get(c) for c in score_cols]; fig,ax=plt.subplots(figsize=(7.4,3.1)); y=np.arange(len(names)); vv=[n(v) or 0 for v in vals]
+    vals=[row.get(c) for c in score_cols]; fig,ax=plt.subplots(figsize=(8.2,2.70)); y=np.arange(len(names)); vv=[n(v) or 0 for v in vals]
     ax.barh(y,vv); ax.set_yticks(y,names); ax.set_xlim(0,100); ax.set_title("Thẻ điểm 6 trụ cột · so với bình quân 20 ngân hàng")
-    for i,v in enumerate(vv): ax.text(v+1,i,f"{v:.0f}",va="center",fontsize=8)
+    for i,v in enumerate(vv): ax.text(v+1,i,f"{v:.0f}",va="center")
     if summary is not None and len(summary):
         means=[pd.to_numeric(summary[c],errors="coerce").mean() for c in score_cols]
         ax.plot(means,y,linestyle="--",marker="o",label="Bình quân 20 NH"); ax.legend(fontsize=7)
@@ -277,7 +328,7 @@ def _chart_scores(row,summary=None):
 def _chart_sensitivity(row):
     bv=n(row.get("BVPS_Used")); price=n(row.get("Price"))
     coe=n(row.get("COE")) or .13; g=n(row.get("LTG")) or .05; roe=n(row.get("NormalizedROE_Used")) or .15
-    fig,ax=plt.subplots(figsize=(7.4,3.4))
+    fig,ax=plt.subplots(figsize=(8.2,2.75))
     if bv is None:
         ax.text(.5,.5,"Chưa có BVPS để lập sensitivity",ha="center",va="center"); ax.set_axis_off()
     else:
@@ -291,17 +342,17 @@ def _chart_sensitivity(row):
                 mat[i,j]=pb*bv
         display_mat=mat*1000.0
         im=ax.imshow(display_mat,aspect="auto")
-        ax.set_xticks(range(len(coes)),[f"{x:.1%}" for x in coes])
-        ax.set_yticks(range(len(roes)),[f"{x:.1%}" for x in roes])
+        ax.set_xticks(range(len(coes)),[f"{_vi_num(x*100,1)}%" for x in coes])
+        ax.set_yticks(range(len(roes)),[f"{_vi_num(x*100,1)}%" for x in roes])
         ax.set_xlabel("Chi phí vốn chủ sở hữu (COE)"); ax.set_ylabel("ROE chuẩn hóa")
         ax.set_title("Sensitivity giá trị cơ bản: ROE x COE")
         for i in range(display_mat.shape[0]):
-            for j in range(display_mat.shape[1]): ax.text(j,i,f"{display_mat[i,j]/1000:.1f}k",ha="center",va="center",fontsize=7)
-        fig.colorbar(im,ax=ax,fraction=.035,pad=.03,label="VND/cp")
+            for j in range(display_mat.shape[1]): ax.text(j,i,f"{_vi_num(display_mat[i,j]/1000,1)}k",ha="center",va="center")
+        cb=fig.colorbar(im,ax=ax,fraction=.035,pad=.03,label="Đồng/cp"); cb.ax.yaxis.set_major_formatter(FuncFormatter(_fmt_vnd_axis))
     return _fig_to_png(fig)
 
 def _chart_price(prices,ticker):
-    fig,ax=plt.subplots(figsize=(7.4,3.0)); p=prices[prices["Ticker"].astype(str).eq(str(ticker))].copy() if len(prices) else pd.DataFrame()
+    fig,ax=plt.subplots(figsize=(8.2,2.75)); p=prices[prices["Ticker"].astype(str).eq(str(ticker))].copy() if len(prices) else pd.DataFrame()
     if p.empty:
         ax.text(.5,.5,"Chưa có lịch sử giá",ha="center",va="center"); ax.set_axis_off()
     else:
@@ -309,18 +360,18 @@ def _chart_price(prices,ticker):
         allp["Norm"]=allp.groupby("Ticker")["Close"].transform(lambda s: s/s.iloc[0]*100 if len(s) and s.iloc[0] else np.nan)
         bench=allp.groupby("Date",as_index=False)["Norm"].mean(); p=allp[allp["Ticker"].astype(str).eq(str(ticker))].copy()
         ax.plot(p["Date"],p["Norm"],label=f"{ticker} (chỉ số=100)"); ax.plot(bench["Date"],bench["Norm"],linestyle="--",label="Bình quân 20 NH (chỉ số=100)")
-        ax.set_title("Diễn biến giá tương đối · so với bình quân 20 ngân hàng"); ax.set_ylabel("Chỉ số giá (đầu kỳ=100)"); ax.grid(alpha=.2); ax.legend(fontsize=7)
+        ax.set_title("Diễn biến giá tương đối - so với bình quân 20 ngân hàng"); ax.set_ylabel("Chỉ số giá (đầu kỳ=100)"); ax.grid(alpha=.2); ax.legend(fontsize=7)
     return _fig_to_png(fig)
 
 
 def _pdf_styles(font,bold):
     styles=getSampleStyleSheet()
     return {
-        "h1":ParagraphStyle("h1",fontName=bold,fontSize=15,leading=19,textColor=colors.HexColor("#0F2747"),spaceAfter=5),
-        "h2":ParagraphStyle("h2",fontName=bold,fontSize=11.5,leading=15,textColor=colors.HexColor("#0F2747"),spaceAfter=4),
-        "body":ParagraphStyle("body",fontName=font,fontSize=8.8,leading=12.2,textColor=colors.HexColor("#222222")),
-        "small":ParagraphStyle("small",fontName=font,fontSize=7.3,leading=9.5,textColor=colors.HexColor("#555555")),
-        "kpi":ParagraphStyle("kpi",fontName=bold,fontSize=9.5,leading=12,textColor=colors.HexColor("#0F2747"),alignment=TA_CENTER),
+        "h1":ParagraphStyle("h1",fontName=bold,fontSize=14,leading=18,textColor=colors.HexColor("#0F2747"),spaceAfter=5),
+        "h2":ParagraphStyle("h2",fontName=bold,fontSize=12,leading=15,textColor=colors.HexColor("#0F2747"),spaceAfter=4),
+        "body":ParagraphStyle("body",fontName=font,fontSize=11,leading=14.3,textColor=colors.HexColor("#222222"),alignment=TA_JUSTIFY,spaceBefore=6,spaceAfter=0),
+        "small":ParagraphStyle("small",fontName=font,fontSize=10,leading=13,textColor=colors.HexColor("#555555"),alignment=TA_JUSTIFY),
+        "kpi":ParagraphStyle("kpi",fontName=bold,fontSize=10,leading=13,textColor=colors.HexColor("#0F2747"),alignment=TA_CENTER),
     }
 
 def _draw_para(c,text,style,x,y,w,h):
@@ -373,176 +424,348 @@ def _report_context(root,ticker):
         if len(q): mna_row=q.iloc[0].to_dict()
     return d,row,peer_row,mna_row
 
+def _rl_flow_image(bio,max_width=178*mm):
+    """Tạo ảnh ReportLab giữ đúng tỷ lệ và dùng hết chiều ngang vùng in."""
+    from PIL import Image as PILImage
+    bio.seek(0)
+    raw=bio.getvalue()
+    tmp=BytesIO(raw)
+    im=PILImage.open(tmp)
+    iw,ih=im.size
+    ratio=ih/iw if iw else .4
+    h=max_width*ratio
+    bio.seek(0)
+    return RLImage(bio,width=max_width,height=h)
+
+def _pdf_page_decor(canvas_obj,doc_obj,ticker,font,bold,stamp=None):
+    canvas_obj.saveState()
+    canvas_obj.setFillColor(colors.HexColor("#0F2747"))
+    canvas_obj.rect(0,PAGE_H-16*mm,PAGE_W,16*mm,fill=1,stroke=0)
+    canvas_obj.setFillColor(colors.white)
+    canvas_obj.setFont(bold,8.8)
+    canvas_obj.drawString(MARGIN,PAGE_H-10.5*mm,"BÁO CÁO PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG")
+    canvas_obj.setFont(font,7.4)
+    canvas_obj.drawRightString(PAGE_W-MARGIN,PAGE_H-10.5*mm,f"{ticker} | Trang {doc_obj.page}")
+    canvas_obj.setFillColor(colors.HexColor("#666666"))
+    canvas_obj.setFont(font,5.8)
+    canvas_obj.drawString(MARGIN,7*mm,"Nguồn: Vnstock/BCTC + mô hình nội bộ. Dữ liệu thực, số liệu tính toán và giả định được tách riêng.")
+    canvas_obj.drawRightString(PAGE_W-MARGIN,7*mm,"Tham khảo - không phải khuyến nghị đầu tư/chào mua.")
+    if stamp and stamp!="ĐỦ ĐIỀU KIỆN PHÁT HÀNH":
+        canvas_obj.setFillColor(colors.HexColor("#B42318"))
+        canvas_obj.setFont(bold,16)
+        canvas_obj.translate(PAGE_W/2,PAGE_H/2); canvas_obj.rotate(30)
+        canvas_obj.drawCentredString(0,0,stamp)
+    canvas_obj.restoreState()
+
+def _flow_table(data,font,bold,col_widths=None,font_size=7.5,header=True):
+    t=Table(data,colWidths=col_widths,repeatRows=1 if header else 0,hAlign="LEFT")
+    style=[
+        ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#CBD5E1")),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("FONTNAME",(0,0),(-1,-1),font),
+        ("FONTSIZE",(0,0),(-1,-1),font_size),
+        ("LEFTPADDING",(0,0),(-1,-1),4),
+        ("RIGHTPADDING",(0,0),(-1,-1),4),
+        ("TOPPADDING",(0,0),(-1,-1),3),
+        ("BOTTOMPADDING",(0,0),(-1,-1),3),
+    ]
+    if header:
+        style += [
+            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#EAF0F7")),
+            ("FONTNAME",(0,0),(-1,0),bold),
+            ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0F2747")),
+        ]
+    t.setStyle(TableStyle(style))
+    return t
+
 def generate_pdf_bytes(root,ticker,mode="investment"):
+    """PDF dạng flow: tự dồn trang, không ép mỗi mục một trang."""
     d,row,peer_row,mna_row=_report_context(root,ticker)
-    font,bold=_register_pdf_fonts(); st=_pdf_styles(font,bold)
-    bio=BytesIO(); c=canvas.Canvas(bio,pagesize=A4)
-    title="BÁO CÁO PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG · ENGINE V6.2"
-    cats,risks=catalysts_risks(row)
+    font,bold=_register_pdf_fonts()
+    st=_pdf_styles(font,bold)
+    # Styles optimized for continuous flow.
+    h1=ParagraphStyle("flow_h1",parent=st["h1"],fontSize=14,leading=18,spaceBefore=6,spaceAfter=4,keepWithNext=True)
+    h2=ParagraphStyle("flow_h2",parent=st["h2"],fontSize=12,leading=15,spaceBefore=5,spaceAfter=3,keepWithNext=True)
+    body=ParagraphStyle("flow_body",parent=st["body"],fontSize=11,leading=14.3,spaceBefore=6,spaceAfter=0,alignment=TA_JUSTIFY)
+    small=ParagraphStyle("flow_small",parent=st["small"],fontSize=10,leading=13,spaceAfter=3,alignment=TA_JUSTIFY)
+
     qa=assess_report_quality(row,d["cfg"],d["hist"],d["prices"])
     norm_flags=normalization_flags(row,d["cfg"],d["prices"])
     strategic_case=strategic_reasonableness(row,d["cfg"],d.get("research"))
     strategic_case_text=reasonableness_conclusion(strategic_case)
     allmean=all_bank_means(d["summary"])
-    stamp=qa["ReportStamp"]
+    cats,risks=catalysts_risks(row)
 
-    # Page 1
-    _draw_header(c,title,ticker,1,font,bold,stamp)
-    y=PAGE_H-29*mm; y=_draw_para(c,f"1. TÓM TẮT ĐIỀU HÀNH - {ticker}",st["h1"],MARGIN,y,120*mm,30*mm)
-    y=_draw_para(c,executive_summary(row,peer_row),st["body"],MARGIN,y-2*mm,118*mm,70*mm)
-    kpis=[("Giá thị trường",money(row.get("Price"))),("Giá trị cơ bản",money(row.get("FairValue_Base")))]
+    bio=BytesIO()
+    doc=SimpleDocTemplate(
+        bio,pagesize=A4,leftMargin=MARGIN,rightMargin=MARGIN,
+        topMargin=22*mm,bottomMargin=14*mm,
+        title=f"Báo cáo phân tích, định giá & M&A ngân hàng - {ticker}",
+        author="Nền tảng Phân tích, Định giá & M&A Ngân hàng Việt Nam"
+    )
+    story=[]
+
+    def P(text,style=body):
+        return Paragraph(escape(str(text)).replace("\n","<br/>"),style)
+
+    def section(title,text=None):
+        story.append(P(title,h1))
+        if text:
+            story.append(P(text,body))
+
+    def chart(bio_img):
+        story.append(_rl_flow_image(bio_img,178*mm))
+        story.append(Spacer(1,3*mm))
+
+    # 1
+    section(f"1. TÓM TẮT ĐIỀU HÀNH - {ticker}",executive_summary(row,peer_row))
+    story.append(P(f"TRẠNG THÁI: {qa['ReportStamp']} | Độ phủ: {_vi_num(qa['ReportCoverage']*100,0)}%",body))
+    kpi=[
+        ["Chỉ tiêu","Giá trị","Chỉ tiêu","Giá trị"],
+        ["Giá thị trường",money(row.get("Price")),"Giá trị cơ bản",money(row.get("FairValue_Base"))],
+        ["Chênh lệch cơ bản",pct(row.get("Upside_Base")),"ROE",pct(row.get("ROE_Used"))],
+        ["P/B",mult(row.get("PB_Current")),"NPL",pct(row.get("NPL"))],
+    ]
+    story.append(_flow_table(kpi,font,bold,[36*mm,48*mm,36*mm,48*mm],8))
+    story.append(Spacer(1,3*mm))
+    chart(_chart_scores(row,d["summary"]))
     if n(row.get("StrategicPriceLow")) is not None:
-        kpis += [("Giá chiến lược thấp",money(row.get("StrategicPriceLow"))),("Giá chiến lược cao",money(row.get("StrategicPriceHigh")))]
-    else:
-        kpis += [("P/B hiện tại",mult(row.get("PB_Current"))),("ROE",pct(row.get("ROE_Used")))]
-    kpis += [("NPL",pct(row.get("NPL"))),("Điểm cơ bản",f"{n(row.get('FundamentalScore')):.0f}/100" if n(row.get("FundamentalScore")) is not None else "N/A")]
-    _kpi_table(c,kpis,st,PAGE_H-32*mm)
-    _draw_image(c,_chart_scores(row,d["summary"]),MARGIN,31*mm,175*mm,66*mm)
-    _draw_para(c,f"Trạng thái báo cáo: {qa['ReportStatus']} | Độ phủ kiểm soát: {qa['ReportCoverage']:.0%} | Thiếu chỉ tiêu lõi: {qa['CoreMissingCount']}",st["small"],MARGIN,27*mm,175*mm,12*mm)
-    if n(row.get("StrategicPriceLow")) is not None:
-        _draw_para(c,f"Thông tin thị trường/M&A: {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))} | Nguồn: {row.get('StrategicSource','N/A')} | Không phải giá trị cơ bản.",st["small"],MARGIN,20*mm,175*mm,12*mm)
-    c.showPage()
+        source_label="Thông tin thị trường do người dùng cung cấp" if str(row.get("StrategicSource",""))=="USER_MARKET_INTELLIGENCE" else str(row.get("StrategicSource","N/A"))
+        story.append(P(f"Thông tin thị trường/M&A: {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}. Nguồn: {source_label}. Khoảng này không phải giá trị cơ bản.",small))
 
-    # Page 2
-    _draw_header(c,title,ticker,2,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"2. HỒ SƠ NGÂN HÀNG & VỊ THẾ TƯƠNG ĐỐI",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,business_profile(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,45*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["TotalAssets"],"Tổng tài sản",False),MARGIN,151*mm,175*mm,43*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["GrossLoans"],"Dư nợ khách hàng",False),MARGIN,99*mm,175*mm,43*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["CustomerDeposits"],"Tiền gửi khách hàng",False),MARGIN,47*mm,175*mm,43*mm)
-    c.showPage()
+    # 2
+    section("2. HỒ SƠ NGÂN HÀNG & VỊ THẾ TƯƠNG ĐỐI",business_profile(row,peer_row))
+    chart(_chart_history(d["hist"],ticker,["TotalAssets"],"Tổng tài sản",False))
+    chart(_chart_history(d["hist"],ticker,["GrossLoans"],"Dư nợ khách hàng",False))
+    chart(_chart_history(d["hist"],ticker,["CustomerDeposits"],"Tiền gửi khách hàng",False))
 
-    # Page 3
-    _draw_header(c,title,ticker,3,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"3. KHẢ NĂNG SINH LỜI & HIỆU QUẢ HOẠT ĐỘNG",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,profitability_text(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,42*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["ROE"],"Tỷ suất sinh lời trên vốn chủ sở hữu (ROE)",True),MARGIN,126*mm,84*mm,50*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["ROA"],"Tỷ suất sinh lời trên tổng tài sản (ROA)",True),MARGIN+91*mm,126*mm,84*mm,50*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["NIM"],"Biên lãi ròng (NIM)",True),MARGIN,67*mm,84*mm,50*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["CIR"],"Tỷ lệ chi phí/thu nhập (CIR)",True),MARGIN+91*mm,67*mm,84*mm,50*mm)
-    c.showPage()
+    # 3
+    section("3. KHẢ NĂNG SINH LỜI & HIỆU QUẢ HOẠT ĐỘNG",profitability_text(row,peer_row))
+    for metric,title in [
+        ("ROE","Tỷ suất sinh lời trên vốn chủ sở hữu (ROE)"),
+        ("ROA","Tỷ suất sinh lời trên tổng tài sản (ROA)"),
+        ("NIM","Biên lãi ròng (NIM)"),
+        ("CIR","Tỷ lệ chi phí/thu nhập (CIR)")
+    ]:
+        chart(_chart_history(d["hist"],ticker,[metric],title,True))
 
-    # Page 4
-    _draw_header(c,title,ticker,4,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"4. CHẤT LƯỢNG TÀI SẢN & CHI PHÍ TÍN DỤNG",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,asset_quality_text(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,42*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["NPL"],"Xu hướng tỷ lệ nợ xấu (NPL)",True),MARGIN,69*mm,175*mm,108*mm)
-    y=61*mm
-    _draw_para(c,"Lưu ý: Provision Expense có thể được Vnstock/BCTC thể hiện theo đơn vị tiền tệ, do đó cần đọc cùng nguồn dữ liệu gốc khi so sánh với tỷ lệ NPL.",st["small"],MARGIN,y,175*mm,20*mm)
-    c.showPage()
+    # 4
+    section("4. CHẤT LƯỢNG TÀI SẢN & CHI PHÍ TÍN DỤNG",asset_quality_text(row,peer_row))
+    chart(_chart_history(d["hist"],ticker,["NPL"],"Xu hướng tỷ lệ nợ xấu (NPL)",True))
+    story.append(P("Lưu ý: chi phí dự phòng có thể được Vnstock/BCTC thể hiện theo đơn vị tiền tệ; cần đọc cùng nguồn dữ liệu gốc khi so sánh với tỷ lệ NPL.",small))
 
-    # Page 5
-    _draw_header(c,title,ticker,5,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"5. NGUỒN VỐN, THANH KHOẢN & CHI PHÍ HUY ĐỘNG",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,funding_text(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,45*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["CASA"],"Tỷ lệ tiền gửi không kỳ hạn (CASA)",True),MARGIN,124*mm,175*mm,58*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["LDR"],"Tỷ lệ cho vay trên tiền gửi (LDR)",True),MARGIN,59*mm,175*mm,58*mm)
-    c.showPage()
+    # 5
+    section("5. NGUỒN VỐN, THANH KHOẢN & CHI PHÍ HUY ĐỘNG",funding_text(row,peer_row))
+    chart(_chart_history(d["hist"],ticker,["CASA"],"Tỷ lệ tiền gửi không kỳ hạn (CASA)",True))
+    chart(_chart_history(d["hist"],ticker,["LDR"],"Tỷ lệ cho vay trên tiền gửi (LDR)",True))
 
-    # Page 6
-    _draw_header(c,title,ticker,6,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"6. VỐN, KHẢ NĂNG CHỐNG CHỊU & NĂNG LỰC TĂNG TRƯỞNG",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,capital_text(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,45*mm)
-    _draw_image(c,_chart_history(d["hist"],ticker,["CAR"],"Xu hướng hệ số an toàn vốn (CAR)",True),MARGIN,70*mm,175*mm,108*mm)
-    c.showPage()
+    # 6
+    section("6. VỐN, KHẢ NĂNG CHỐNG CHỊU & NĂNG LỰC TĂNG TRƯỞNG",capital_text(row,peer_row))
+    chart(_chart_history(d["hist"],ticker,["CAR"],"Xu hướng hệ số an toàn vốn (CAR)",True))
 
-    # Page 7
-    _draw_header(c,title,ticker,7,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"7. ĐỊNH GIÁ TƯƠNG ĐỐI & NHÓM SO SÁNH",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,valuation_text(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,43*mm)
-    _draw_image(c,_chart_peer(d["summary"],ticker),MARGIN,82*mm,175*mm,95*mm)
+    # 7
+    section("7. ĐỊNH GIÁ TƯƠNG ĐỐI & NHÓM SO SÁNH",valuation_text(row,peer_row))
+    chart(_chart_peer(d["summary"],ticker))
     if peer_row:
-        pdata=[["Chỉ tiêu",ticker,"Trung bình nhóm so sánh","Bình quân 20 NH"],
-               ["ROE",pct(row.get("ROE_Used")),pct(peer_row.get("MeanROE")),pct(allmean.get("ROE_Used"))],
-               ["NIM",pct(row.get("NIM")),pct(peer_row.get("MeanNIM")),pct(allmean.get("NIM"))],
-               ["NPL",pct(row.get("NPL")),pct(peer_row.get("MeanNPL")),pct(allmean.get("NPL"))],
-               ["CAR",pct(row.get("CAR")),pct(peer_row.get("MeanCAR")),pct(allmean.get("CAR"))],
-               ["CASA",pct(row.get("CASA")),pct(peer_row.get("MeanCASA")),pct(allmean.get("CASA"))],
-               ["P/B",mult(row.get("PB_Current")),mult(peer_row.get("MeanPB")),mult(allmean.get("PB_Current"))]]
-        tt=Table(pdata,colWidths=[34*mm,34*mm,34*mm,40*mm]); tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.grey),("FONTNAME",(0,0),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),7.5),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#EAF0F7"))]))
-        tw,th=tt.wrap(145*mm,60*mm); tt.drawOn(c,MARGIN,25*mm)
-    c.showPage()
+        pdata=[
+            ["Chỉ tiêu",ticker,"Trung bình nhóm so sánh","Bình quân 20 NH"],
+            ["ROE",pct(row.get("ROE_Used")),pct(peer_row.get("MeanROE")),pct(allmean.get("ROE_Used"))],
+            ["NIM",pct(row.get("NIM")),pct(peer_row.get("MeanNIM")),pct(allmean.get("NIM"))],
+            ["NPL",pct(row.get("NPL")),pct(peer_row.get("MeanNPL")),pct(allmean.get("NPL"))],
+            ["CAR",pct(row.get("CAR")),pct(peer_row.get("MeanCAR")),pct(allmean.get("CAR"))],
+            ["CASA",pct(row.get("CASA")),pct(peer_row.get("MeanCASA")),pct(allmean.get("CASA"))],
+            ["P/B",mult(row.get("PB_Current")),mult(peer_row.get("MeanPB")),mult(allmean.get("PB_Current"))]
+        ]
+        story.append(_flow_table(pdata,font,bold,[30*mm,35*mm,52*mm,52*mm],7.4))
+        story.append(Spacer(1,3*mm))
 
-    # Page 8
-    _draw_header(c,title,ticker,8,font,bold,stamp); y=PAGE_H-29*mm
+    # 8
     if mode=="mna":
-        y=_draw_para(c,"8. GIÁ TRỊ QUYỀN KIỂM SOÁT & MÔ PHỎNG M&A",st["h1"],MARGIN,y,170*mm,20*mm)
-        y=_draw_para(c,mna_text(row,mna_row),st["body"],MARGIN,y-2*mm,175*mm,55*mm)
+        section("8. GIÁ TRỊ QUYỀN KIỂM SOÁT & MÔ PHỎNG M&A",mna_text(row,mna_row))
         if mna_row:
-            data=[["Giá trị độc lập",bn(mna_row.get("Giá trị độc lậpEquityValue"))],["Giá trị hiện tại của cộng hưởng",bn(mna_row.get("PV_Synergies"))],["Chi phí tích hợp",bn(mna_row.get("IntegrationCost"))],["Giá trị thanh toán",bn(mna_row.get("IllustrativeGiá trị thanh toán"))],["P/B giao dịch",mult(mna_row.get("ImpliedPB"))],["P/TBV giao dịch",mult(mna_row.get("ImpliedPTBV"))]]
-            t=Table(data,colWidths=[60*mm,65*mm]); t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.4,colors.grey),("FONTNAME",(0,0),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),8.5),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#F3F6FA"))]))
-            tw,th=t.wrap(130*mm,100*mm); t.drawOn(c,MARGIN,y-th-10*mm)
+            data=[
+                ["Chỉ tiêu","Giá trị"],
+                ["Giá trị độc lập",bn(mna_row.get("StandaloneEquityValue"))],
+                ["Giá trị hiện tại của cộng hưởng",bn(mna_row.get("PV_Synergies"))],
+                ["Chi phí tích hợp",bn(mna_row.get("IntegrationCost"))],
+                ["Giá trị thanh toán",bn(mna_row.get("IllustrativeConsideration"))],
+                ["P/B giao dịch",mult(mna_row.get("ImpliedPB"))],
+                ["P/TBV giao dịch",mult(mna_row.get("ImpliedPTBV"))],
+            ]
+            story.append(_flow_table(data,font,bold,[90*mm,80*mm],8))
     else:
-        y=_draw_para(c,"8. ĐỊNH GIÁ CƠ BẢN & GIÁ TRỊ CHIẾN LƯỢC",st["h1"],MARGIN,y,170*mm,20*mm)
-        y=_draw_para(c,valuation_text(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,38*mm)
+        section("8. ĐỊNH GIÁ CƠ BẢN & GIÁ TRỊ CHIẾN LƯỢC",valuation_text(row,peer_row))
         if n(row.get("StrategicPriceLow")) is not None:
-            strategic=(f"Lớp giá trị chiến lược/M&A được ghi nhận riêng ở {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}. "
-                       f"Nguồn: {row.get('StrategicSource','N/A')}; ngày {row.get('StrategicAsOfDate','N/A')}; mức độ tin cậy {row.get('StrategicConfidence','N/A')}. "
-                       "Khoảng này không được dùng để ép ngược giá trị cơ bản; chênh lệch cần được giải thích bằng quy mô lô, quyền kiểm soát, scarcity, tái cơ cấu và synergy.")
-            y=_draw_para(c,strategic,st["body"],MARGIN,y-2*mm,175*mm,42*mm)
-        _draw_image(c,_chart_valuation(d["methods"],row,d["summary"]),MARGIN,69*mm,175*mm,95*mm)
-    c.showPage()
+            story.append(P(
+                f"Lớp giá trị chiến lược/M&A được ghi nhận riêng ở {money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}. "
+                f"Nguồn: {row.get('StrategicSource','N/A')}; ngày {row.get('StrategicAsOfDate','N/A')}; mức độ tin cậy {row.get('StrategicConfidence','N/A')}. "
+                "Khoảng này không được dùng để ép ngược giá trị cơ bản; chênh lệch cần được giải thích bằng quy mô lô, quyền kiểm soát, tính khan hiếm, tái cơ cấu và giá trị cộng hưởng.",
+                body
+            ))
+        chart(_chart_valuation(d["methods"],row,d["summary"]))
 
-    # Page 9
-    _draw_header(c,title,ticker,9,font,bold,stamp); y=PAGE_H-29*mm
+    # 9
     if mode=="mna":
-        y=_draw_para(c,"9. PPA, GOODWILL & TÁC ĐỘNG TÁI CƠ CẤU",st["h1"],MARGIN,y,170*mm,20*mm)
-        ppa=(
-            "Trong acquisition method, giá mua được phân bổ vào tài sản và nợ phải trả có thể xác định theo giá trị hợp lý. "
-            "Đối với ngân hàng, loan-book credit mark, chứng khoán, các nghĩa vụ ngoại bảng và tài sản vô hình liên quan đến "
-            "franchise khách hàng/tiền gửi cần được thẩm định riêng. Goodwill chỉ là phần chênh lệch sau các điều chỉnh này. "
-            "Trong trường hợp ngân hàng mục tiêu cần bổ sung vốn, recapitalization phải được trừ khỏi giá mua tối đa."
-        )
-        y=_draw_para(c,ppa,st["body"],MARGIN,y-2*mm,175*mm,55*mm)
-        _draw_image(c,_chart_sensitivity(row),MARGIN,70*mm,175*mm,105*mm)
+        section("9. PPA, LỢI THẾ THƯƠNG MẠI & TÁC ĐỘNG TÁI CƠ CẤU",
+                "Trong phương pháp mua lại, giá mua được phân bổ vào tài sản và nợ phải trả có thể xác định theo giá trị hợp lý. "
+                "Đối với ngân hàng, điều chỉnh rủi ro tín dụng danh mục cho vay, chứng khoán, nghĩa vụ ngoại bảng và tài sản vô hình liên quan đến khách hàng/tiền gửi cần được thẩm định riêng. "
+                "Lợi thế thương mại chỉ là phần chênh lệch còn lại. Nếu ngân hàng mục tiêu cần bổ sung vốn, phần vốn bổ sung phải được tách khỏi giá mua tối đa.")
+        chart(_chart_sensitivity(row))
     else:
-        y=_draw_para(c,"9. KIỂM TRA TÍNH HỢP LÝ 80.000–100.000 ĐỒNG/CP",st["h1"],MARGIN,y,170*mm,20*mm)
+        section("9. KIỂM TRA TÍNH HỢP LÝ 80.000-100.000 ĐỒNG/CP",
+                "Đối chiếu định lượng vùng giá chiến lược với thị giá, BVPS hiện tại/hậu xử lý, giá trị lô 32,5%, ước tính 63.250 tỷ đồng gốc+lãi liên quan và các nghiên cứu công khai. Đây là kiểm tra tính hợp lý kinh tế, không phải khẳng định giá giao dịch tương lai.")
         if strategic_case.get("strategic_low") is not None:
             lo=strategic_case["low"]; hi=strategic_case["high"]
-            data=[["Chỉ tiêu","80.000 đồng/cp","100.000 đồng/cp"],["Premium so với thị giá",pct(lo.get("premium_to_market")),pct(hi.get("premium_to_market"))],["P/B trên BVPS hiện tại",mult(lo.get("implied_pb_current")),mult(hi.get("implied_pb_current"))],["P/B hậu xử lý (BVPS +10k)",mult(lo.get("implied_pb_post_resolution")),mult(hi.get("implied_pb_post_resolution"))],["Giá trị lô 32,5%",bn((lo.get("block_consideration_bn") or 0)*1e9),bn((hi.get("block_consideration_bn") or 0)*1e9)],["Bao phủ 63.250 tỷ gốc+lãi",pct(lo.get("claim_recovery")),pct(hi.get("claim_recovery"))],["So với high-case công khai",pct(lo.get("premium_to_public_high")),pct(hi.get("premium_to_public_high"))]]
-            tb=Table(data,colWidths=[72*mm,50*mm,50*mm]); tb.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#CBD5E1")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0F2747")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),bold),("FONTNAME",(0,1),(-1,-1),font),("FONTSIZE",(0,0),(-1,-1),7.4),("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
-            tw,th=tb.wrap(175*mm,100*mm); tb.drawOn(c,MARGIN,y-th-4*mm); y=y-th-8*mm
-            y=_draw_para(c,"80.000 đồng/cp có thể xem là mức chiến lược tương đối dễ biện minh vì chỉ premium nhẹ so với thị giá và nằm sát high-case fundamental công khai. 100.000 đồng/cp là hợp lý có điều kiện: giá trị lô 32,5% tiến gần mức thu hồi đầy đủ 63.250 tỷ đồng, vì vậy cần xác suất xử lý cao cùng scarcity/quyền ảnh hưởng và giá trị hậu tái cơ cấu.",st["small"],MARGIN,y,175*mm,45*mm)
-            _draw_para(c,"Đối chiếu nghiên cứu công khai 2026: HSC 57.600; MBS 58.800; VNDIRECT 73.000 (sensitivity 66.000–81.000); Vietcap 73.500; SBBS 66.200 đồng/cp. Vì vậy 80.000 nằm ở vùng high-case standalone, còn 100.000 cần strategic premium chứ không thể được gọi là standalone fair value.",st["small"],MARGIN,y-2*mm,175*mm,32*mm)
-        else: _draw_para(c,"Không có dữ liệu market intelligence để kiểm tra giá chiến lược.",st["body"],MARGIN,y-2*mm,175*mm,42*mm)
-    c.showPage()
+            data=[
+                ["Chỉ tiêu","80.000 đồng/cp","100.000 đồng/cp"],
+                ["Mức cao hơn thị giá",pct(lo.get("premium_to_market")),pct(hi.get("premium_to_market"))],
+                ["P/B trên BVPS hiện tại",mult(lo.get("implied_pb_current")),mult(hi.get("implied_pb_current"))],
+                ["P/B hậu xử lý (BVPS +10.000)",mult(lo.get("implied_pb_post_resolution")),mult(hi.get("implied_pb_post_resolution"))],
+                ["Giá trị lô 32,5%",bn((lo.get("block_consideration_bn") or 0)*1e9),bn((hi.get("block_consideration_bn") or 0)*1e9)],
+                ["Bao phủ 63.250 tỷ gốc+lãi",pct(lo.get("claim_recovery")),pct(hi.get("claim_recovery"))],
+                ["So với kịch bản cao công khai",pct(lo.get("premium_to_public_high")),pct(hi.get("premium_to_public_high"))],
+            ]
+            story.append(_flow_table(data,font,bold,[75*mm,48*mm,48*mm],7.4))
+            story.append(Spacer(1,3*mm))
+            story.append(P(
+                "80.000 đồng/cp là mức chiến lược tương đối dễ biện minh vì chỉ cao hơn nhẹ so với thị giá và nằm sát vùng kịch bản cao của định giá độc lập công khai. "
+                "100.000 đồng/cp là mức hợp lý có điều kiện: giá trị lô 32,5% tiến gần mức thu hồi đầy đủ 63.250 tỷ đồng, vì vậy cần xác suất xử lý cao cùng quyền ảnh hưởng và giá trị hậu tái cơ cấu.",
+                small
+            ))
+        chart(_chart_sensitivity(row))
 
-    # Page 10
-    _draw_header(c,title,ticker,10,font,bold,stamp); y=PAGE_H-29*mm
-    y=_draw_para(c,"10. KẾT LUẬN, ĐỘNG LỰC & RỦI RO",st["h1"],MARGIN,y,170*mm,20*mm)
-    y=_draw_para(c,executive_summary(row,peer_row),st["body"],MARGIN,y-2*mm,175*mm,48*mm)
-    y=_draw_para(c,"ĐỘNG LỰC TIỀM NĂNG",st["h2"],MARGIN,y-4*mm,175*mm,15*mm)
-    for x in cats[:5]: y=_draw_para(c,"• "+x,st["body"],MARGIN+3*mm,y,170*mm,18*mm)-1*mm
-    y=_draw_para(c,"RỦI RO CHÍNH",st["h2"],MARGIN,y-2*mm,175*mm,15*mm)
-    for x in risks[:5]: y=_draw_para(c,"• "+x,st["body"],MARGIN+3*mm,y,170*mm,18*mm)-1*mm
-    y=_draw_para(c,"ĐIỂM CẦN LƯU Ý KHI ĐỊNH GIÁ",st["h2"],MARGIN,y-2*mm,175*mm,15*mm)
-    for x in norm_flags[:4]: y=_draw_para(c,"• "+x,st["small"],MARGIN+3*mm,y,170*mm,14*mm)-1*mm
-    y=_draw_para(c,"GHI CHÚ PHƯƠNG PHÁP",st["h2"],MARGIN,y-1*mm,175*mm,15*mm)
-    _draw_para(c,"Residual Income là phương pháp nội tại chính; P/B hợp lý, peer P/B và historical P/B là cross-check. Trong M&A, giá trị quyền kiểm soát, cộng hưởng, PPA và recapitalization được tách khỏi standalone fair value. Mọi assumption phải được gắn nhãn và không được trình bày như dữ liệu quan sát thực tế.",st["small"],MARGIN,y,175*mm,42*mm)
-    c.save(); bio.seek(0); return bio.getvalue()
+    # 10
+    section("10. KẾT LUẬN, ĐỘNG LỰC & RỦI RO",executive_summary(row,peer_row))
+    story.append(P("ĐỘNG LỰC TIỀM NĂNG",h2))
+    for x in cats[:5]: story.append(P("• "+x,body))
+    story.append(P("RỦI RO CHÍNH",h2))
+    for x in risks[:5]: story.append(P("• "+x,body))
+    story.append(P("ĐIỂM CẦN LƯU Ý KHI ĐỊNH GIÁ",h2))
+    for x in norm_flags[:5]: story.append(P("• "+x,small))
+    story.append(P(
+        "Ghi chú phương pháp: Thu nhập thặng dư là phương pháp nội tại chính; P/B hợp lý, P/B nhóm so sánh và P/B lịch sử là các phép kiểm tra chéo. "
+        "Trong M&A, giá trị quyền kiểm soát, giá trị cộng hưởng, PPA và nhu cầu bổ sung vốn được tách khỏi giá trị cơ bản độc lập. "
+        "Mọi giả định phải được gắn nhãn và không được trình bày như dữ liệu quan sát thực tế.",small
+    ))
+
+    decor=lambda canv,docobj:_pdf_page_decor(canv,docobj,ticker,font,bold,qa["ReportStamp"])
+    doc.build(story,onFirstPage=decor,onLaterPages=decor)
+    bio.seek(0)
+    return bio.getvalue()
 
 def _doc_font(doc):
     styles=doc.styles
     for style_name in ["Normal","Title","Heading 1","Heading 2"]:
         style=styles[style_name]
-        style.font.name="Arial"
-        style._element.rPr.rFonts.set(qn("w:eastAsia"),"Arial")
-    styles["Normal"].font.size=Pt(9)
+        style.font.name="Lato"
+        style._element.rPr.rFonts.set(qn("w:ascii"),"Lato")
+        style._element.rPr.rFonts.set(qn("w:hAnsi"),"Lato")
+        style._element.rPr.rFonts.set(qn("w:eastAsia"),"Lato")
+        style._element.rPr.rFonts.set(qn("w:cs"),"Lato")
+
+    normal=styles["Normal"]
+    normal.font.size=Pt(11)
+    normal.paragraph_format.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    normal.paragraph_format.space_before=Pt(6)
+    normal.paragraph_format.space_after=Pt(0)
+    normal.paragraph_format.line_spacing=1.3
+
+    styles["Heading 1"].font.size=Pt(14)
+    styles["Heading 1"].font.bold=True
+    styles["Heading 1"].font.color.rgb=None
+    styles["Heading 1"].paragraph_format.space_before=Pt(8)
+    styles["Heading 1"].paragraph_format.space_after=Pt(4)
+    styles["Heading 1"].paragraph_format.keep_with_next=True
+
+    styles["Heading 2"].font.size=Pt(12)
+    styles["Heading 2"].font.bold=True
+    styles["Heading 2"].paragraph_format.space_before=Pt(6)
+    styles["Heading 2"].paragraph_format.space_after=Pt(3)
+    styles["Heading 2"].paragraph_format.keep_with_next=True
+
+    # Bullet/list text follows the 11pt Lato body standard.
+    for style_name in ["List Bullet","List Number"]:
+        if style_name in styles:
+            s=styles[style_name]
+            s.font.name="Lato"
+            s._element.rPr.rFonts.set(qn("w:ascii"),"Lato")
+            s._element.rPr.rFonts.set(qn("w:hAnsi"),"Lato")
+            s._element.rPr.rFonts.set(qn("w:eastAsia"),"Lato")
+            s.font.size=Pt(11)
+            s.paragraph_format.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+            s.paragraph_format.line_spacing=1.3
+
 
 def _add_doc_header(section,ticker,page):
     header=section.header.paragraphs[0]
-    header.text=f"BÁO CÁO PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG | {ticker}"
+    header.text=f"BÁO CÁO PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG | {ticker} | ENGINE V6.4"
     for run in header.runs:
-        run.font.name="Arial"
-        run.font.size=Pt(8)
+        run.font.name="Lato"
+        run.font.size=Pt(10)
     footer=section.footer.paragraphs[0]
     footer.text="Tài liệu phân tích - không phải khuyến nghị đầu tư/chào mua."
     for run in footer.runs:
-        run.font.name="Arial"
-        run.font.size=Pt(7)
+        run.font.name="Lato"
+        run.font.size=Pt(10)
 
 def _add_picture(doc,bio,width=178):
-    bio.seek(0); doc.add_picture(bio,width=Mm(width))
+    bio.seek(0)
+    p=doc.add_paragraph()
+    p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before=Pt(2)
+    p.paragraph_format.space_after=Pt(6)
+    p.paragraph_format.keep_together=True
+    run=p.add_run()
+    run.add_picture(bio,width=Mm(width))
+    return p
+
+def _normalize_docx_typography(doc):
+    """Enforce final report typography after all content has been created."""
+    # Main narrative paragraphs: Lato 11, justified. Keep headings and image paragraphs centered/as styled.
+    for p in doc.paragraphs:
+        style_name = p.style.name if p.style is not None else ""
+        has_drawing = bool(p._p.xpath(".//w:drawing"))
+        if style_name not in ("Heading 1","Heading 2","Title") and not has_drawing:
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.line_spacing = 1.3
+            p.paragraph_format.space_before = Pt(6)
+            p.paragraph_format.space_after = Pt(0)
+        for r in p.runs:
+            r.font.name="Lato"
+            r._element.rPr.rFonts.set(qn("w:ascii"),"Lato")
+            r._element.rPr.rFonts.set(qn("w:hAnsi"),"Lato")
+            r._element.rPr.rFonts.set(qn("w:eastAsia"),"Lato")
+            r._element.rPr.rFonts.set(qn("w:cs"),"Lato")
+            if style_name not in ("Heading 1","Heading 2","Title"):
+                r.font.size=Pt(11)
+
+    # Tables: Lato 10 throughout; justified cell text.
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                for p in cell.paragraphs:
+                    p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+                    p.paragraph_format.line_spacing=1.15
+                    p.paragraph_format.space_before=Pt(0)
+                    p.paragraph_format.space_after=Pt(0)
+                    for r in p.runs:
+                        r.font.name="Lato"
+                        r._element.rPr.rFonts.set(qn("w:ascii"),"Lato")
+                        r._element.rPr.rFonts.set(qn("w:hAnsi"),"Lato")
+                        r._element.rPr.rFonts.set(qn("w:eastAsia"),"Lato")
+                        r._element.rPr.rFonts.set(qn("w:cs"),"Lato")
+                        r.font.size=Pt(10)
+
+    # Header/footer: Lato 10.
+    for sec in doc.sections:
+        for p in list(sec.header.paragraphs)+list(sec.footer.paragraphs):
+            for r in p.runs:
+                r.font.name="Lato"
+                r._element.rPr.rFonts.set(qn("w:ascii"),"Lato")
+                r._element.rPr.rFonts.set(qn("w:hAnsi"),"Lato")
+                r._element.rPr.rFonts.set(qn("w:eastAsia"),"Lato")
+                r.font.size=Pt(10)
 
 def generate_docx_bytes(root,ticker,mode="investment"):
     d,row,peer_row,mna_row=_report_context(root,ticker)
@@ -551,7 +774,7 @@ def generate_docx_bytes(root,ticker,mode="investment"):
     strategic_case=strategic_reasonableness(row,d["cfg"],d.get("research"))
     strategic_case_text=reasonableness_conclusion(strategic_case)
     doc=Document(); sec=doc.sections[0]
-    sec.page_width=Mm(210); sec.page_height=Mm(297); sec.top_margin=Mm(18); sec.bottom_margin=Mm(16); sec.left_margin=Mm(16); sec.right_margin=Mm(16)
+    sec.page_width=Mm(210); sec.page_height=Mm(297); sec.top_margin=Mm(16); sec.bottom_margin=Mm(15); sec.left_margin=Mm(16); sec.right_margin=Mm(16)
     _doc_font(doc); cats,risks=catalysts_risks(row)
 
     pages=[
@@ -577,8 +800,9 @@ def generate_docx_bytes(root,ticker,mode="investment"):
     ]
     for i,(head,body,chart) in enumerate(pages,1):
         _add_doc_header(doc.sections[-1],ticker,i)
-        p=doc.add_paragraph(); p.style="Heading 1"; p.add_run(head)
-        doc.add_paragraph(body)
+        p=doc.add_paragraph(); p.style="Heading 1"; p.paragraph_format.keep_with_next=True; p.add_run(head)
+        body_p=doc.add_paragraph(body)
+        body_p.paragraph_format.widow_control=True
         if i==1:
             p=doc.add_paragraph()
             r=p.add_run(f"TRẠNG THÁI: {qa['ReportStamp']} | Độ phủ: {qa['ReportCoverage']:.0%}")
@@ -589,12 +813,12 @@ def generate_docx_bytes(root,ticker,mode="investment"):
                 rr=j//2; cc=(j%2)*2; table.cell(rr,cc).text=k; table.cell(rr,cc+1).text=v
         if chart is not None:
             if isinstance(chart,(list,tuple)):
-                # Nhiều biểu đồ trên cùng một trang: thu nhỏ có kiểm soát để không tràn sang trang sau.
-                chart_width = 86 if len(chart)>=3 else 138
+                # V6.3: mọi biểu đồ dùng gần toàn bộ chiều ngang vùng in A4.
+                # Word tự đẩy biểu đồ xuống trang kế tiếp nếu phần còn lại không đủ chỗ.
                 for ch in chart:
-                    _add_picture(doc,ch,chart_width)
+                    _add_picture(doc,ch,178)
             else:
-                _add_picture(doc,chart,176)
+                _add_picture(doc,chart,178)
         if i==10:
             doc.add_paragraph("ĐỘNG LỰC TIỀM NĂNG",style="Heading 2")
             for x in cats[:5]: doc.add_paragraph(x,style="List Bullet")
@@ -602,6 +826,7 @@ def generate_docx_bytes(root,ticker,mode="investment"):
             for x in risks[:5]: doc.add_paragraph(x,style="List Bullet")
             doc.add_paragraph("ĐIỂM CẦN LƯU Ý KHI ĐỊNH GIÁ",style="Heading 2")
             for x in norm_flags[:5]: doc.add_paragraph(x,style="List Bullet")
-            doc.add_paragraph("Tài liệu phân tích phục vụ mục đích tham khảo; không phải khuyến nghị mua/bán chứng khoán hoặc chào mua trong một thương vụ cụ thể.")
-        if i<10: doc.add_page_break()
+            # Disclaimer đã có ở footer; không lặp lại để tránh tạo một trang trắng gần như hoàn toàn.
+        # Không chèn page break cưỡng bức: Word tự dồn trang theo nội dung thực tế.
+    _normalize_docx_typography(doc)
     bio=BytesIO(); doc.save(bio); return bio.getvalue()

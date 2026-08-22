@@ -10,21 +10,33 @@ def n(v):
     except Exception:
         return None
 
+def _vi_number(x,d=0):
+    """Định dạng số kiểu Việt Nam: dấu chấm hàng nghìn, dấu phẩy thập phân."""
+    try:
+        x=float(x)
+        if not math.isfinite(x): return "N/A"
+    except Exception:
+        return "N/A"
+    s=f"{x:,.{d}f}"
+    # Python: 1,234.56 -> Việt Nam: 1.234,56
+    return s.replace(",","§").replace(".",",").replace("§",".")
+
 def pct(v,d=1):
     x=n(v)
-    return "N/A" if x is None else f"{x:.{d}%}"
+    return "N/A" if x is None else f"{_vi_number(x*100,d)}%"
 
 def mult(v,d=2):
     x=n(v)
-    return "N/A" if x is None else f"{x:.{d}f}x"
+    return "N/A" if x is None else f"{_vi_number(x,d)}x"
 
 def money(v):
     x=n(v)
-    return "N/A" if x is None else f"{x*1000:,.0f} đồng/cp"
+    return "N/A" if x is None else f"{_vi_number(x*1000,0)} đồng/cp"
 
 def bn(v):
     x=n(v)
-    return "N/A" if x is None else f"{x/1e9:,.0f} tỷ đồng"
+    return "N/A" if x is None else f"{_vi_number(x/1e9,0)} tỷ đồng"
+
 
 def asof(row, metric):
     v=row.get(f"{metric}_AsOf")
@@ -35,9 +47,15 @@ def peer_cmp(value, peer_value, higher_is_better=True, unit="pct"):
     v=n(value); p=n(peer_value)
     if v is None or p is None: return "chưa đủ dữ liệu nhóm so sánh"
     diff=v-p
-    if unit=="pct": d=f"{diff:+.1%}"
-    elif unit=="x": d=f"{diff:+.2f}x"
-    else: d=f"{diff:+.2f}"
+    if unit=="pct":
+        sign="+" if diff>=0 else "-"
+        d=f"{sign}{_vi_number(abs(diff)*100,1)}%"
+    elif unit=="x":
+        sign="+" if diff>=0 else "-"
+        d=f"{sign}{_vi_number(abs(diff),2)}x"
+    else:
+        sign="+" if diff>=0 else "-"
+        d=f"{sign}{_vi_number(abs(diff),2)}"
     favorable=(diff>=0) if higher_is_better else (diff<=0)
     return f"{'tốt hơn' if favorable else 'kém hơn'} trung vị nhóm so sánh ({d})"
 
@@ -69,14 +87,14 @@ def executive_summary(row, peer_row=None):
     strategic=""
     if n(row.get("StrategicPriceLow")) is not None:
         strategic=(f" Song song với định giá cơ bản, lớp thông tin thị trường ghi nhận vùng giá chiến lược/M&A "
-                   f"{money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}, tương ứng premium "
+                   f"{money(row.get('StrategicPriceLow'))} - {money(row.get('StrategicPriceHigh'))}, tương ứng mức cao hơn "
                    f"{pct(row.get('StrategicPremiumLow'))} đến {pct(row.get('StrategicPremiumHigh'))} so với thị giá. "
-                   "Vùng này có thể phản ánh scarcity premium, quy mô lô, quyền kiểm soát, optionality tái cơ cấu và giá trị cộng hưởng. "
-                   "Do đó, khoảng cách giữa fundamental value và thị giá không được diễn giải cơ học thành mức giảm giá kỳ vọng của cổ phiếu.")
+                   "Vùng này có thể phản ánh phần bù do tính khan hiếm, quy mô lô, quyền kiểm soát, giá trị quyền chọn từ quá trình tái cơ cấu và giá trị cộng hưởng. "
+                   "Do đó, khoảng cách giữa giá trị cơ bản và thị giá không được diễn giải cơ học thành mức giảm giá kỳ vọng của cổ phiếu.")
     return (
         f"{t} đang giao dịch tại {p}. Giá trị cơ bản của mô hình là {fv}, tương ứng chênh lệch {up} so với thị giá. "
         f"ROE {roe}, P/B {pb}, NPL gần nhất {npl}{asof(row,'NPL')} và CAR công bố gần nhất {car}{asof(row,'CAR')}; "
-        f"chất lượng cơ bản tổng hợp được xếp {fview}. Giá trị cơ bản được xác định bằng Residual Income và kiểm tra chéo "
+        f"chất lượng cơ bản tổng hợp được xếp {fview}. Giá trị cơ bản được xác định bằng Thu nhập thặng dư và kiểm tra chéo "
         "với P/B hợp lý, P/B nhóm so sánh và vùng P/B lịch sử." + peer_txt + strategic
     )
 

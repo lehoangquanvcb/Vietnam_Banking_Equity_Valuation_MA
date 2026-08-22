@@ -1,0 +1,8 @@
+Factor,MaxScore,Weight,AutomaticInputs,ManualReviewRequired,Interpretation
+Vị thế kinh doanh,6,18%,Tổng tài sản; tăng trưởng tín dụng; tăng trưởng tiền gửi; CASA,Có,1 mạnh nhất - 6 yếu nhất
+Vốn đòn bẩy và lợi nhuận,6,25%,CAR; ROE; ROA; NIM; CIR,Có,1 mạnh nhất - 6 yếu nhất
+Vị thế rủi ro,6,25%,NPL; CAR; tăng trưởng tín dụng; ROE,Có,1 mạnh nhất - 6 yếu nhất
+Huy động vốn,4,12%,CASA; tăng trưởng tiền gửi; LDR; quy mô,Có,1 mạnh nhất - 4 yếu nhất
+Thanh khoản,4,10%,LDR; CASA; tăng trưởng tiền gửi; quy mô,Có,1 mạnh nhất - 4 yếu nhất
+Quản trị và quản trị rủi ro,6,10%,Mặc định 3/6,Luôn luôn,1 mạnh nhất - 6 yếu nhất
+Hỗ trợ bên ngoài,Notches,0%,Cổ đông/tập đoàn/chính phủ,Luôn luôn,-2 đến +2 bậc

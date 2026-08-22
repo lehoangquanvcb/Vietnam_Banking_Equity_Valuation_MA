@@ -207,3 +207,42 @@ Sau khi copy đè package vào project hiện tại (giữ `.git`), chạy `RUN_
 - Toàn bộ time-series chart dùng trục thời gian thực `PeriodDate`, không dùng categorical order của chuỗi ký tự quý.
 - Target bank và Bình quân 20 NH được sort theo cùng khóa thời gian trước khi vẽ; thiếu quý không làm xáo trộn trục hoành.
 - Sửa đồng thời Streamlit, PDF và Word report.
+
+
+## V6.3 - Định dạng số Việt Nam & tự động dồn trang
+- Báo cáo dùng quy ước số Việt Nam: `74.700 đồng/cp`, `892.049 tỷ đồng`, `5,0%`, `2,24x`.
+- Biểu đồ trong Word/PDF dùng gần toàn bộ chiều ngang vùng in A4.
+- Không còn ép mỗi mục phân tích vào một trang cố định.
+- Word và PDF sử dụng cơ chế flow: nội dung tự chuyển sang trang kế tiếp khi hết chỗ, hạn chế khoảng trắng lớn.
+- Biểu đồ được thiết kế dạng ngang rộng, chiều cao gọn hơn để tăng mật độ thông tin mà vẫn dễ đọc.
+- Trục số của biểu đồ cũng sử dụng dấu chấm hàng nghìn và dấu phẩy thập phân theo quy ước Việt Nam.
+
+
+## V6.4 - Chuẩn typography báo cáo
+- Font Lato toàn bộ Word/PDF và biểu đồ.
+- Nội dung chính: 11 pt, căn đều hai lề (Justified), line spacing 1,3; Before 6 pt; After 0 pt.
+- Bảng: Lato 10 pt.
+- Biểu đồ: Lato 10 pt cho nhãn, trục, chú giải và tiêu đề.
+- Heading 1: Lato Bold 14 pt; Heading 2: Lato Bold 12 pt.
+- Project không đóng gói/chia sẻ file font; máy chạy report cần cài Lato để xuất PDF đúng chuẩn.
+
+## V7.0 - Xếp hạng tín nhiệm ngân hàng
+- Bổ sung tab **Xếp hạng tín nhiệm** và chế độ phân tích riêng.
+- Khung phân tích tham khảo cấu trúc báo cáo xếp hạng ngân hàng KLB do người dùng cung cấp: Vị thế kinh doanh; Vốn, đòn bẩy & lợi nhuận; Vị thế rủi ro; Huy động vốn; Thanh khoản; Quản trị & quản trị rủi ro; Hỗ trợ bên ngoài; Triển vọng; yếu tố nâng/hạ bậc.
+- Kết quả tự động là **Xếp hạng mô phỏng / nội bộ**, không phải xếp hạng tín nhiệm chính thức. Các yếu tố quản trị, hỗ trợ và điều chỉnh chuyên viên phải được rà soát định tính.
+- Có thể xuất **PDF + Word** báo cáo XHTN cho bất kỳ ngân hàng nào trong universe 20 ngân hàng.
+- Báo cáo XHTN kế thừa chuẩn trình bày V6.4: Lato, nội dung 11 pt, bảng/biểu đồ 10 pt, căn đều hai lề, số kiểu Việt Nam.
+
+### Xuất nhanh báo cáo XHTN trên Windows
+Chạy `RUN_CREDIT_RATING_REPORT.bat`, nhập mã ngân hàng (KLB/STB/VCB...) và báo cáo Word/PDF sẽ được tạo trong thư mục `reports`.
+
+
+## V7.2 - BICRA Anchor + notch methodology
+- BICRA/Anchor Việt Nam mặc định: vnA- theo Phương pháp XHTN Ngân hàng 2025.
+- Không còn tính rating bằng weighted composite score.
+- Hồ sơ kinh doanh, Vốn & lợi nhuận, Vị thế rủi ro được chuyển trực tiếp thành notch (+2/+1/0/-1/-2 hoặc -3/-4 hoặc -5).
+- Huy động vốn và Thanh khoản được chấm riêng 4 mức và kết hợp theo ma trận Bảng 10 để ra notch chung.
+- SACP = Anchor + toàn bộ notch nội tại.
+- ICR cuối cùng = SACP + notch hỗ trợ bên ngoài.
+- Báo cáo bổ sung bảng cầu nối BICRA -> SACP -> ICR và phần Rủi ro vĩ mô & ngành tổng hợp từ báo cáo KLB tham khảo.
+- Benchmark hiển thị là "Bình quân 20 ngân hàng niêm yết".

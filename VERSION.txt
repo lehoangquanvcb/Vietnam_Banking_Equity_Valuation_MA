@@ -1,2 +1,1 @@
-ENGINE V6.2
-VIETNAMESE UI + SINGLE-METRIC CHARTS + Y-AXIS PADDING + PEER AVERAGE
+V7.2 - BICRA Anchor + Exact Notch Matrices + Analyst Range Override
