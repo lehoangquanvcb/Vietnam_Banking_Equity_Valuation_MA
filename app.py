@@ -13,6 +13,7 @@ from scripts.narrative_engine import (
 )
 from scripts.report_engine import generate_pdf_bytes, generate_docx_bytes
 from scripts.quality_engine import assess_report_quality, normalization_flags
+from scripts.strategic_case import load_research, strategic_reasonableness, reasonableness_conclusion, all_bank_means
 
 ROOT=Path(__file__).resolve().parent
 DATA=ROOT/"data"; OUT=DATA/"model_outputs"
@@ -55,6 +56,146 @@ def mult(x,d=2): return "N/A" if num(x) is None else f"{num(x):.{d}f}x"
 def fmtbn(x): return "N/A" if num(x) is None else f"{num(x)/1e9:,.0f} tỷ"
 def safe(df): return df.copy().replace([np.inf,-np.inf],np.nan)
 
+
+# ===== Nhãn hiển thị tiếng Việt (chỉ presentation layer; không đổi schema dữ liệu) =====
+METRIC_VI = {
+    "TotalAssets":"Tổng tài sản",
+    "GrossLoans":"Dư nợ khách hàng",
+    "CustomerDeposits":"Tiền gửi khách hàng",
+    "Equity":"Vốn chủ sở hữu",
+    "TangibleEquity":"Vốn chủ sở hữu hữu hình",
+    "NPAT":"Lợi nhuận sau thuế",
+    "NetInterestIncome":"Thu nhập lãi thuần",
+    "OperatingIncome":"Tổng thu nhập hoạt động",
+    "ProvisionExpense":"Chi phí dự phòng",
+    "ROE":"ROE",
+    "ROA":"ROA",
+    "NIM":"NIM",
+    "NPL":"Tỷ lệ nợ xấu (NPL)",
+    "CAR":"Hệ số an toàn vốn (CAR)",
+    "CIR":"Tỷ lệ chi phí/thu nhập (CIR)",
+    "LDR":"Tỷ lệ cho vay/tiền gửi (LDR)",
+    "CASA":"CASA",
+    "PB":"P/B",
+    "PE":"P/E",
+}
+COLUMN_VI = {
+    "Ticker":"Mã ngân hàng","PeerGroup":"Nhóm ngân hàng so sánh","OwnershipType":"Hình thức sở hữu",
+    "Price":"Giá thị trường","FairValue_Base":"Giá trị cơ bản","FairValue_Bear":"Kịch bản thận trọng",
+    "FairValue_Bull":"Kịch bản tích cực","Upside_Base":"Chênh lệch so với thị giá",
+    "PB_Current":"P/B hiện tại","PTBV_Current":"P/TBV hiện tại","PE_Current":"P/E hiện tại",
+    "ROE_Used":"ROE","ROA":"ROA","NIM":"NIM","NPL":"NPL","CAR":"CAR","CASA":"CASA","CIR":"CIR","LDR":"LDR",
+    "InvestmentScore":"Điểm đầu tư","InvestmentView":"Đánh giá đầu tư","DataCoverage":"Độ phủ dữ liệu",
+    "TotalAssets":"Tổng tài sản","GrossLoans":"Dư nợ khách hàng","CustomerDeposits":"Tiền gửi khách hàng",
+    "Equity":"Vốn chủ sở hữu","NPAT":"Lợi nhuận sau thuế","NetInterestIncome":"Thu nhập lãi thuần",
+    "ProfitabilityScore":"Điểm sinh lời","GrowthScore":"Điểm tăng trưởng",
+    "AssetQualityScore":"Điểm chất lượng tài sản","FundingScore":"Điểm nguồn vốn",
+    "CapitalScore":"Điểm an toàn vốn","ValuationScore":"Điểm định giá",
+}
+PEER_GROUP_VI = {
+    "State-owned large":"Ngân hàng quốc doanh quy mô lớn",
+    "Private large":"Ngân hàng tư nhân quy mô lớn",
+    "Private mid":"Ngân hàng tư nhân quy mô trung bình",
+    "Private small":"Ngân hàng tư nhân quy mô nhỏ",
+}
+METHOD_VI = {
+    "ResidualIncome":"Thu nhập thặng dư",
+    "JustifiedPB":"P/B hợp lý",
+    "PeerPB":"P/B nhóm so sánh",
+    "HistoricalPB":"P/B lịch sử",
+}
+def metric_vi(metric):
+    return METRIC_VI.get(str(metric), str(metric))
+def display_df(df):
+    return df.rename(columns={c:COLUMN_VI.get(c,c) for c in df.columns})
+def _apply_y_padding(fig, values, percent=True):
+    vals=pd.to_numeric(pd.Series(values),errors="coerce").dropna()
+    if vals.empty:return
+    lo=float(vals.min()); hi=float(vals.max())
+    span=hi-lo
+    if span<=0:
+        span=max(abs(hi)*0.20,0.01 if percent else 1.0)
+    pad=max(span*0.15, 0.003 if percent else abs(hi)*0.03 if hi else 1.0)
+    lower=lo-pad; upper=hi+pad
+    if percent and lo>=0:
+        lower=max(0.0, lower)
+        if lo>0 and lower==lo: lower=max(0.0,lo*0.75)
+    fig.update_yaxes(range=[lower,upper])
+
+def _period_parts(value):
+    import re
+    s=str(value).upper().strip()
+    y=re.search(r"(20\d{2})",s)
+    q=re.search(r"Q\s*([1-4])",s)
+    return (int(y.group(1)) if y else 0,int(q.group(1)) if q else 0)
+
+def _period_date(value):
+    y,q=_period_parts(value)
+    if y and q:return pd.Timestamp(year=y,month=(q-1)*3+1,day=1)
+    if y:return pd.Timestamp(year=y,month=1,day=1)
+    return pd.NaT
+
+def _clean_history_metric(df,metric):
+    x=df.copy()
+    x["Value"]=pd.to_numeric(x.Value,errors="coerce")
+    x=x.dropna(subset=["Value"])
+    if metric in {"ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA","PB","PE"}: x=x[x.Value!=0]
+    if metric=="CAR": x=x[x.Value>0]
+    x["PeriodDate"]=x.Period.map(_period_date)
+    x=x.dropna(subset=["PeriodDate"]).sort_values("PeriodDate")
+    return x
+
+def peer_history(metric):
+    if hist.empty:return pd.DataFrame()
+    x=hist[hist.Metric.astype(str).eq(str(metric))].copy()
+    x=_clean_history_metric(x,metric)
+    if x.empty:return pd.DataFrame()
+    return x.groupby("PeriodDate",as_index=False).agg(PeerMean=("Value","mean"),BankCount=("Ticker","nunique")).sort_values("PeriodDate")
+
+def metric_history_figure(ticker,metrics,title,percent=True):
+    """Biểu đồ lịch sử trên trục thời gian thực, có benchmark bình quân 20 ngân hàng."""
+    fig=go.Figure()
+    all_values=[]
+    for metric in metrics:
+        h=hist[(hist.Ticker.astype(str)==str(ticker)) & (hist.Metric.astype(str)==str(metric))].copy()
+        h=_clean_history_metric(h,metric)
+        pm=peer_history(metric)
+        label=metric_vi(metric)
+        if len(h):
+            all_values.extend(h.Value.tolist())
+            fig.add_trace(go.Scatter(
+                x=h.PeriodDate,y=h.Value,mode="lines+markers",
+                name=f"{ticker} - {label}",customdata=h.Period,
+                hovertemplate="%{customdata}<br>%{y}<extra></extra>"
+            ))
+        if len(pm):
+            all_values.extend(pm.PeerMean.tolist())
+            fig.add_trace(go.Scatter(
+                x=pm.PeriodDate,y=pm.PeerMean,mode="lines",
+                line=dict(dash="dash"),
+                name=f"Bình quân 20 NH - {label}",
+                hovertemplate="%{x|%Y}<br>%{y}<extra></extra>"
+            ))
+    fig.update_layout(
+        title=title+" · so với bình quân 20 ngân hàng",
+        height=390,legend=dict(orientation="h",y=-.22),
+        margin=dict(t=55,b=75)
+    )
+    fig.update_xaxes(type="date",dtick="M12",tickformat="%Y",title="")
+    if percent: fig.update_yaxes(tickformat=".1%")
+    _apply_y_padding(fig,all_values,percent=percent)
+    return fig
+
+def relative_price_figure(ticker):
+    p=prices.copy()
+    if p.empty:return go.Figure()
+    p["Date"]=pd.to_datetime(p.Date,errors="coerce"); p["Close"]=pd.to_numeric(p.Close,errors="coerce"); p=p.dropna(subset=["Date","Close"]).sort_values(["Ticker","Date"])
+    p["Norm"]=p.groupby("Ticker")["Close"].transform(lambda s: s/s.iloc[0]*100 if len(s) and s.iloc[0] else np.nan)
+    bench=p.groupby("Date",as_index=False).Norm.mean(); q=p[p.Ticker.astype(str)==str(ticker)]
+    fig=go.Figure(); fig.add_trace(go.Scatter(x=q.Date,y=q.Norm,mode="lines",name=f"{ticker} (đầu kỳ=100)")); fig.add_trace(go.Scatter(x=bench.Date,y=bench.Norm,mode="lines",line=dict(dash="dash"),name="Bình quân 20 NH (đầu kỳ=100)"))
+    fig.update_layout(title="Diễn biến giá tương đối · so với bình quân 20 ngân hàng",height=430,yaxis_title="Chỉ số giá")
+    return fig
+
 summary=csv(OUT/"valuation_summary.csv")
 methods=csv(OUT/"valuation_methods.csv")
 peer=csv(OUT/"peer_summary.csv")
@@ -64,6 +205,7 @@ prices=csv(DATA/"price_history.csv")
 log=csv(DATA/"refresh_log.csv")
 cfg=js(ROOT/"config/model_config.json")
 precedents=csv(ROOT/"config/transaction_precedents.csv")
+research=load_research(ROOT)
 
 st.sidebar.markdown("## MỤC ĐÍCH PHÂN TÍCH")
 mode_label=st.sidebar.radio(
@@ -92,9 +234,10 @@ else:
 
 st.sidebar.caption("Vnstock Bronze chạy LOCAL → ACTUAL CSV → mô hình định giá → GitHub → Streamlit chỉ đọc dữ liệu.")
 st.sidebar.caption("ACTUAL = dữ liệu nguồn · CALCULATED = công thức · ASSUMPTION = kịch bản.")
+st.sidebar.caption("ENGINE V6.2 · PEER AVERAGE + STRATEGIC CASE")
 
 st.title("NỀN TẢNG PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG VIỆT NAM")
-st.caption("Vietnam Banking Valuation & M&A Intelligence Platform")
+st.caption("Vietnam Banking Valuation & M&A Intelligence Platform · ENGINE V6.2 · PEER AVERAGE + STRATEGIC CASE")
 st.markdown(f"**Chế độ hiện tại:** {mode_label}")
 
 if summary.empty:
@@ -119,21 +262,27 @@ if len(mna):
 
 qa=assess_report_quality(row.to_dict(),cfg,hist,prices)
 norm_flags=normalization_flags(row.to_dict(),cfg,prices)
+strategic_case=strategic_reasonableness(row.to_dict(),cfg,research)
+strategic_case_text=reasonableness_conclusion(strategic_case)
+all_means=all_bank_means(summary)
 
 # Header investment case.
 h1,h2,h3,h4,h5,h6=st.columns(6)
 h1.metric("Giá thị trường",money(row.Price))
-h2.metric("Giá trị hợp lý",money(row.FairValue_Base),pct(row.Upside_Base))
-h3.metric("P/B",mult(row.PB_Current))
-h4.metric("ROE",pct(row.ROE_Used))
+h2.metric("Giá trị cơ bản",money(row.FairValue_Base))
+if num(row.get("StrategicPriceLow")) is not None:
+    h3.metric("Giá chiến lược thấp",money(row.StrategicPriceLow),pct(row.StrategicPremiumLow))
+    h4.metric("Giá chiến lược cao",money(row.StrategicPriceHigh),pct(row.StrategicPremiumHigh))
+else:
+    h3.metric("P/B",mult(row.PB_Current)); h4.metric("ROE",pct(row.ROE_Used))
 h5.metric("NPL",pct(row.NPL))
-h6.metric("Điểm đầu tư",f"{row.InvestmentScore:.0f}/100" if num(row.get("InvestmentScore")) is not None else "N/A")
+h6.metric("Điểm cơ bản",f"{row.FundamentalScore:.0f}/100" if num(row.get("FundamentalScore")) is not None else "N/A")
 
 status_icon={"CHÍNH THỨC":"✅","BẢN NHÁP":"⚠️","CHƯA ĐỦ DỮ LIỆU":"⛔"}.get(qa["ReportStatus"],"ℹ️")
-st.markdown(f"""<div class="analysis-box"><b>{status_icon} TRẠNG THÁI BÁO CÁO: {qa["ReportStatus"]}</b> · Độ phủ kiểm soát {qa["ReportCoverage"]:.0%}<br><br><b>NHẬN ĐỊNH CHÍNH</b><br>{executive_summary(row.to_dict())}</div>""",unsafe_allow_html=True)
+st.markdown(f"""<div class="analysis-box"><b>{status_icon} TRẠNG THÁI BÁO CÁO: {qa["ReportStatus"]}</b> · Độ phủ kiểm soát {qa["ReportCoverage"]:.0%}<br><br><b>NHẬN ĐỊNH CHÍNH</b><br>{executive_summary(row.to_dict(),peer_row)}</div>""",unsafe_allow_html=True)
 
 if num(row.get("StrategicPriceLow")) is not None:
-    st.info(f"GIÁ TRỊ CHIẾN LƯỢC / M&A (MARKET INTELLIGENCE): {money(row.StrategicPriceLow)} - {money(row.StrategicPriceHigh)}. Đây là lớp giá trị giao dịch riêng, không thay thế giá trị cơ bản {money(row.FairValue_Base)}.")
+    st.info(f"GIÁ TRỊ CHIẾN LƯỢC / M&A (THÔNG TIN THỊ TRƯỜNG): {money(row.StrategicPriceLow)} - {money(row.StrategicPriceHigh)}. Đây là lớp giá trị giao dịch riêng, không thay thế giá trị cơ bản {money(row.FairValue_Base)}.")
 
 tabs=st.tabs([
     "Tổng quan thị trường","Sàng lọc cổ phiếu","Hồ sơ ngân hàng","Định giá cổ phiếu",
@@ -157,20 +306,19 @@ with tabs[0]:
         fig.update_layout(height=460); st.plotly_chart(fig,use_container_width=True)
     with right:
         q=summary.sort_values("InvestmentScore",ascending=False).head(10).sort_values("InvestmentScore")
-        fig=px.bar(q,x="InvestmentScore",y="Ticker",orientation="h",title="Top 10 điểm đầu tư",hover_data=["Upside_Base","ROE_Used","NPL"])
+        fig=px.bar(q,x="InvestmentScore",y="Ticker",orientation="h",title="Top 10 điểm đầu tư · benchmark 20 ngân hàng",hover_data=["Upside_Base","ROE_Used","NPL"])
+        mean_score=pd.to_numeric(summary.InvestmentScore,errors="coerce").mean(); fig.add_vline(x=mean_score,line_dash="dash",annotation_text=f"Bình quân 20 NH {mean_score:.1f}")
         fig.update_layout(height=460,xaxis_title="Điểm / 100"); st.plotly_chart(fig,use_container_width=True)
 
     if not presentation:
         cols=["Ticker","PeerGroup","Price","FairValue_Base","Upside_Base","PB_Current","ROE_Used","NPL","CAR","InvestmentScore","InvestmentView"]
-        st.dataframe(safe(summary[cols].sort_values("InvestmentScore",ascending=False)).style.format({
-            "Price":lambda v: f"{v*1000:,.0f}","FairValue_Base":lambda v: f"{v*1000:,.0f}","Upside_Base":"{:.1%}","PB_Current":"{:.2f}x","ROE_Used":"{:.1%}","NPL":"{:.1%}","CAR":"{:.1%}","InvestmentScore":"{:.0f}"
-        }),hide_index=True,use_container_width=True,height=400)
+        st.dataframe(display_df(safe(summary[cols].sort_values("InvestmentScore",ascending=False))),hide_index=True,use_container_width=True,height=400)
 
 with tabs[1]:
     st.subheader("Sàng lọc cổ phiếu ngân hàng")
     c1,c2,c3,c4=st.columns(4)
     groups=["Tất cả"]+sorted(summary.PeerGroup.dropna().astype(str).unique().tolist())
-    grp=c1.selectbox("Nhóm ngân hàng",groups)
+    grp=c1.selectbox("Nhóm ngân hàng",groups,format_func=lambda x: "Tất cả" if x=="Tất cả" else PEER_GROUP_VI.get(x,x))
     minroe=c2.slider("ROE tối thiểu",0.0,.35,.10,.01)
     maxpb=c3.slider("P/B tối đa",.3,4.0,2.0,.1)
     minscore=c4.slider("Điểm đầu tư tối thiểu",0,100,50,5)
@@ -178,9 +326,7 @@ with tabs[1]:
     if grp!="Tất cả":z=z[z.PeerGroup.astype(str).eq(grp)]
     z=z[(z.ROE_Used>=minroe)&(z.PB_Current<=maxpb)&(z.InvestmentScore>=minscore)]
     cols=["Ticker","PeerGroup","Price","FairValue_Base","Upside_Base","PB_Current","PTBV_Current","PE_Current","ROE_Used","NIM","NPL","CAR","CASA","InvestmentScore","InvestmentView"]
-    st.dataframe(safe(z[cols].sort_values("InvestmentScore",ascending=False)).style.format({
-        "Price":lambda v: f"{v*1000:,.0f}","FairValue_Base":lambda v: f"{v*1000:,.0f}","Upside_Base":"{:.1%}","PB_Current":"{:.2f}x","PTBV_Current":"{:.2f}x","PE_Current":"{:.1f}x","ROE_Used":"{:.1%}","NIM":"{:.1%}","NPL":"{:.1%}","CAR":"{:.1%}","CASA":"{:.1%}","InvestmentScore":"{:.0f}"
-    }),hide_index=True,use_container_width=True)
+    st.dataframe(display_df(safe(z[cols].sort_values("InvestmentScore",ascending=False))),hide_index=True,use_container_width=True)
 
 with tabs[2]:
     st.subheader(f"Hồ sơ ngân hàng - {selected}")
@@ -189,33 +335,82 @@ with tabs[2]:
     c4.metric("NPL",pct(row.NPL)); c5.metric("CAR",pct(row.CAR)); c6.metric("CASA",pct(row.CASA))
     st.markdown(f"""<div class="analysis-box"><b>VỊ THẾ & TĂNG TRƯỞNG</b><br>{business_profile(row.to_dict(),peer_row)}</div>""",unsafe_allow_html=True)
 
+    if peer_row:
+        st.markdown("### So sánh với nhóm tương đồng")
+        bench=pd.DataFrame([
+            ["ROE",row.get("ROE_Used"),peer_row.get("MeanROE"),peer_row.get("MedianROE"),all_means.get("ROE_Used")],
+            ["ROA",row.get("ROA"),peer_row.get("MeanROA"),peer_row.get("MedianROA"),all_means.get("ROA")],
+            ["NIM",row.get("NIM"),peer_row.get("MeanNIM"),peer_row.get("MedianNIM"),all_means.get("NIM")],
+            ["NPL",row.get("NPL"),peer_row.get("MeanNPL"),peer_row.get("MedianNPL"),all_means.get("NPL")],
+            ["CAR",row.get("CAR"),peer_row.get("MeanCAR"),peer_row.get("MedianCAR"),all_means.get("CAR")],
+            ["CASA",row.get("CASA"),peer_row.get("MeanCASA"),peer_row.get("MedianCASA"),all_means.get("CASA")],
+            ["CIR",row.get("CIR"),peer_row.get("MeanCIR"),peer_row.get("MedianCIR"),all_means.get("CIR")],
+            ["LDR",row.get("LDR"),peer_row.get("MeanLDR"),peer_row.get("MedianLDR"),all_means.get("LDR")],
+            ["P/B",row.get("PB_Current"),peer_row.get("MeanPB"),peer_row.get("MedianPB"),all_means.get("PB_Current")],
+            ["P/TBV",row.get("PTBV_Current"),peer_row.get("MeanPTBV"),peer_row.get("MedianPTBV"),all_means.get("PTBV_Current")],
+        ],columns=["Chỉ tiêu",selected,"Trung bình nhóm so sánh","Trung vị nhóm so sánh","Bình quân 20 NH"])
+        pct_metrics={"ROE","ROA","NIM","NPL","CAR","CASA","CIR","LDR"}
+        def _fb(r):
+            if r["Chỉ tiêu"] in pct_metrics:
+                return [r["Chỉ tiêu"],pct(r[selected]),pct(r["Trung bình nhóm so sánh"]),pct(r["Trung vị nhóm so sánh"]),pct(r["Bình quân 20 NH"])]
+            return [r["Chỉ tiêu"],mult(r[selected]),mult(r["Trung bình nhóm so sánh"]),mult(r["Trung vị nhóm so sánh"]),mult(r["Bình quân 20 NH"])]
+        shown=pd.DataFrame([_fb(r) for _,r in bench.iterrows()],columns=bench.columns)
+        st.dataframe(shown,hide_index=True,use_container_width=True)
+
     score_cols=["ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore"]
     score_names=["Sinh lời","Tăng trưởng","Chất lượng tài sản","Nguồn vốn","An toàn vốn","Định giá"]
     scores=[num(row.get(c)) for c in score_cols]
-    fig=go.Figure(go.Bar(x=[x or 0 for x in scores],y=score_names,orientation="h",text=[f"{x:.0f}" if x is not None else "N/A" for x in scores],textposition="outside"))
-    fig.update_layout(title="Thẻ điểm 6 trụ cột",xaxis_range=[0,105],height=380,xaxis_title="Điểm / 100")
+    fig=go.Figure(go.Bar(x=[x or 0 for x in scores],y=score_names,orientation="h",text=[f"{x:.0f}" if x is not None else "N/A" for x in scores],textposition="outside",name=selected))
+    peer_scores=[pd.to_numeric(summary[c],errors="coerce").mean() for c in score_cols]
+    fig.add_trace(go.Scatter(x=peer_scores,y=score_names,mode="lines+markers",line=dict(dash="dash"),name="Bình quân 20 NH"))
+    fig.update_layout(title="Thẻ điểm 6 trụ cột · so với bình quân 20 ngân hàng",xaxis_range=[0,105],height=380,xaxis_title="Điểm / 100")
     st.plotly_chart(fig,use_container_width=True)
 
-    left,right=st.columns(2)
-    with left:
-        h=hist[hist.Ticker.astype(str).eq(str(selected))].copy() if len(hist) else pd.DataFrame()
-        if len(h):
-            h["Value"]=pd.to_numeric(h.Value,errors="coerce")
-            q=h[h.Metric.astype(str).isin(["ROE","ROA","NIM","NPL","CAR","CASA"])].copy()
-            if len(q):
-                fig=px.line(q,x="Period",y="Value",color="Metric",markers=True,title="Lịch sử chỉ tiêu tài chính")
-                fig.update_yaxes(tickformat=".1%"); st.plotly_chart(fig,use_container_width=True)
-    with right:
-        p=prices[prices.Ticker.astype(str).eq(str(selected))].copy() if len(prices) else pd.DataFrame()
-        if len(p):
-            p["Date"]=pd.to_datetime(p.Date,errors="coerce"); p["Close"]=pd.to_numeric(p.Close,errors="coerce")
-            st.plotly_chart(px.line(p,x="Date",y="Close",title="Diễn biến giá cổ phiếu"),use_container_width=True)
+    st.markdown("### Xu hướng chỉ tiêu theo thời gian - so với bình quân 20 ngân hàng")
+    if len(hist):
+        st.caption("Mỗi biểu đồ chỉ thể hiện một chỉ tiêu để tránh sai lệch trực quan do khác biệt thang đo.")
+
+        r1c1,r1c2=st.columns(2)
+        with r1c1:
+            st.plotly_chart(metric_history_figure(selected,["TotalAssets"],"Tổng tài sản",percent=False),use_container_width=True)
+        with r1c2:
+            st.plotly_chart(metric_history_figure(selected,["GrossLoans"],"Dư nợ khách hàng",percent=False),use_container_width=True)
+
+        r2c1,r2c2=st.columns(2)
+        with r2c1:
+            st.plotly_chart(metric_history_figure(selected,["CustomerDeposits"],"Tiền gửi khách hàng",percent=False),use_container_width=True)
+        with r2c2:
+            st.plotly_chart(metric_history_figure(selected,["ROE"],"Tỷ suất sinh lời trên vốn chủ sở hữu (ROE)"),use_container_width=True)
+
+        r3c1,r3c2=st.columns(2)
+        with r3c1:
+            st.plotly_chart(metric_history_figure(selected,["ROA"],"Tỷ suất sinh lời trên tổng tài sản (ROA)"),use_container_width=True)
+        with r3c2:
+            st.plotly_chart(metric_history_figure(selected,["NIM"],"Biên lãi ròng (NIM)"),use_container_width=True)
+
+        r4c1,r4c2=st.columns(2)
+        with r4c1:
+            st.plotly_chart(metric_history_figure(selected,["CIR"],"Tỷ lệ chi phí/thu nhập (CIR)"),use_container_width=True)
+        with r4c2:
+            st.plotly_chart(metric_history_figure(selected,["NPL"],"Tỷ lệ nợ xấu (NPL)"),use_container_width=True)
+
+        r5c1,r5c2=st.columns(2)
+        with r5c1:
+            st.plotly_chart(metric_history_figure(selected,["CASA"],"Tỷ lệ tiền gửi không kỳ hạn (CASA)"),use_container_width=True)
+        with r5c2:
+            st.plotly_chart(metric_history_figure(selected,["LDR"],"Tỷ lệ cho vay trên tiền gửi (LDR)"),use_container_width=True)
+
+        r6c1,r6c2=st.columns(2)
+        with r6c1:
+            st.plotly_chart(metric_history_figure(selected,["CAR"],"Hệ số an toàn vốn (CAR)"),use_container_width=True)
+        with r6c2:
+            if len(prices): st.plotly_chart(relative_price_figure(selected),use_container_width=True)
 
     st.markdown("### Nhận định chuyên môn")
-    st.write("**Sinh lời:** "+profitability_text(row.to_dict()))
-    st.write("**Chất lượng tài sản:** "+asset_quality_text(row.to_dict()))
-    st.write("**Nguồn vốn:** "+funding_text(row.to_dict()))
-    st.write("**Vốn:** "+capital_text(row.to_dict()))
+    st.write("**Sinh lời:** "+profitability_text(row.to_dict(),peer_row))
+    st.write("**Chất lượng tài sản:** "+asset_quality_text(row.to_dict(),peer_row))
+    st.write("**Nguồn vốn:** "+funding_text(row.to_dict(),peer_row))
+    st.write("**Vốn:** "+capital_text(row.to_dict(),peer_row))
 
 with tabs[3]:
     st.subheader(f"Định giá cổ phiếu - {selected}")
@@ -225,14 +420,18 @@ with tabs[3]:
     c.metric("Kịch bản thận trọng",money(row.FairValue_Bear))
     d.metric("Kịch bản tích cực",money(row.FairValue_Bull))
     e.metric("P/B hợp lý",mult(row.JustifiedPB))
-    st.markdown(f"""<div class="analysis-box"><b>KẾT LUẬN ĐỊNH GIÁ</b><br>{valuation_text(row.to_dict())}</div>""",unsafe_allow_html=True)
+    st.markdown(f"""<div class="analysis-box"><b>KẾT LUẬN ĐỊNH GIÁ</b><br>{valuation_text(row.to_dict(),peer_row)}</div>""",unsafe_allow_html=True)
 
     m=methods[methods.Ticker.astype(str).eq(str(selected))].copy()
     if len(m):
         m["FairValuePerShare"]=pd.to_numeric(m.FairValuePerShare,errors="coerce")
-        fig=px.bar(m.dropna(subset=["FairValuePerShare"]),x="Method",y="FairValuePerShare",title="Football Field - giá trị hợp lý theo phương pháp")
+        m["Phương pháp"]=m["Method"].map(lambda x: METHOD_VI.get(str(x),str(x)))
+        fig=px.bar(m.dropna(subset=["FairValuePerShare"]),x="Phương pháp",y="FairValuePerShare",title="Dải định giá - giá trị cơ bản, nhóm so sánh và chiến lược")
         fig.add_hline(y=row.Price,line_dash="dash",annotation_text="Giá thị trường")
-        fig.update_layout(height=430,yaxis_title="VND/cp",xaxis_title="")
+        peer_pb_mean=pd.to_numeric(summary.PB_Current,errors="coerce").mean(); peer_implied=peer_pb_mean*num(row.get("BVPS_Used")) if num(row.get("BVPS_Used")) else None
+        if peer_implied is not None: fig.add_hline(y=peer_implied,line_dash="dot",annotation_text=f"P/B bình quân 20 NH {peer_pb_mean:.2f}x")
+        if num(row.get("StrategicPriceLow")) is not None: fig.add_hrect(y0=row.StrategicPriceLow,y1=row.StrategicPriceHigh,opacity=.12,line_width=0,annotation_text="Vùng giá chiến lược")
+        fig.update_layout(height=430,yaxis_title="Nghìn đồng/cp",xaxis_title="")
         st.plotly_chart(fig,use_container_width=True)
         if not presentation:
             st.dataframe(m[["Method","FairValuePerShare","MarketPrice","Upside","DataType"]].style.format({
@@ -242,7 +441,7 @@ with tabs[3]:
     st.markdown("### Ba lớp giá trị: thị trường - cơ bản - chiến lược")
     bridge=pd.DataFrame([
         {"Lớp giá trị":"Giá thị trường","Giá thấp":row.Price,"Giá cao":row.Price,"Ý nghĩa":"Giá giao dịch trên sàn"},
-        {"Lớp giá trị":"Giá trị cơ bản","Giá thấp":row.FairValue_Bear,"Giá cao":row.FairValue_Bull,"Ý nghĩa":"Residual Income + P/B + peer + lịch sử"},
+        {"Lớp giá trị":"Giá trị cơ bản","Giá thấp":row.FairValue_Bear,"Giá cao":row.FairValue_Bull,"Ý nghĩa":"Thu nhập thặng dư + P/B + nhóm so sánh + lịch sử"},
         {"Lớp giá trị":"Giá trị chiến lược/M&A","Giá thấp":row.get("StrategicPriceLow"),"Giá cao":row.get("StrategicPriceHigh"),"Ý nghĩa":"Market intelligence / block premium / quyền kiểm soát"},
     ])
     st.dataframe(bridge.style.format({"Giá thấp":lambda v: f"{v*1000:,.0f}","Giá cao":lambda v: f"{v*1000:,.0f}"},na_rep="N/A"),hide_index=True,use_container_width=True)
@@ -261,19 +460,21 @@ with tabs[4]:
     if len(peer):
         st.dataframe(peer.style.format({"MedianPB":"{:.2f}x","MedianPTBV":"{:.2f}x","MedianROE":"{:.1%}","MedianNPL":"{:.1%}","MedianUpside":"{:.1%}"}),hide_index=True,use_container_width=True)
     if peer_row:
-        st.markdown(f"### {selected} so với trung vị nhóm {row.PeerGroup}")
+        st.markdown(f"### {selected} so với trung vị nhóm {PEER_GROUP_VI.get(str(row.PeerGroup),str(row.PeerGroup))}")
         metrics=[("ROE","ROE_Used","MedianROE",True),("ROA","ROA","MedianROA",True),("NIM","NIM","MedianNIM",True),("NPL","NPL","MedianNPL",False),("CAR","CAR","MedianCAR",True),("CASA","CASA","MedianCASA",True),("CIR","CIR","MedianCIR",False),("P/B","PB_Current","MedianPB",False)]
         rr=[]
         for label,col,pcol,higher in metrics:
             v=num(row.get(col)); pv=num(peer_row.get(pcol)); gap=(v-pv) if v is not None and pv is not None else None
-            verdict="N/A" if gap is None else ("Tốt hơn peer" if (gap>0)==higher else "Kém hơn peer" if gap!=0 else "Ngang peer")
-            rr.append({"Chỉ tiêu":label,selected:v,"Trung vị peer":pv,"Chênh lệch":gap,"Đánh giá":verdict})
+            verdict="N/A" if gap is None else ("Tốt hơn nhóm so sánh" if (gap>0)==higher else "Kém hơn nhóm so sánh" if gap!=0 else "Tương đương nhóm so sánh")
+            rr.append({"Chỉ tiêu":label,selected:v,"Trung vị nhóm so sánh":pv,"Chênh lệch":gap,"Đánh giá":verdict})
         peer_cmp=pd.DataFrame(rr)
-        st.dataframe(peer_cmp.style.format({selected:"{:.2%}","Trung vị peer":"{:.2%}","Chênh lệch":"{:+.2%}"},na_rep="N/A"),hide_index=True,use_container_width=True)
+        st.dataframe(peer_cmp.style.format({selected:"{:.2%}","Trung vị nhóm so sánh":"{:.2%}","Chênh lệch":"{:+.2%}"},na_rep="N/A"),hide_index=True,use_container_width=True)
     q=summary.dropna(subset=["ROE_Used","PB_Current"])
     fig=px.scatter(q,x="ROE_Used",y="PB_Current",color="PeerGroup",text="Ticker",size="TotalAssets",hover_data=["NPL","CAR","Upside_Base","InvestmentScore"],title="ROE - P/B: chất lượng sinh lời và định giá")
-    fig.update_traces(textposition="top center"); fig.update_xaxes(tickformat=".0%"); fig.update_layout(height=560)
-    st.plotly_chart(fig,use_container_width=True)
+    fig.update_traces(textposition="top center"); fig.update_xaxes(tickformat=".0%")
+    mean_roe=pd.to_numeric(q.ROE_Used,errors="coerce").mean(); mean_pb=pd.to_numeric(q.PB_Current,errors="coerce").mean()
+    fig.add_vline(x=mean_roe,line_dash="dash",annotation_text=f"ROE BQ20 {mean_roe:.1%}"); fig.add_hline(y=mean_pb,line_dash="dash",annotation_text=f"P/B BQ20 {mean_pb:.2f}x")
+    fig.update_layout(height=560); st.plotly_chart(fig,use_container_width=True)
 
 with tabs[5]:
     st.subheader(f"Định giá M&A / Quyền kiểm soát - {selected}")
@@ -293,11 +494,31 @@ with tabs[5]:
     x1,x2,x3,x4,x5=st.columns(5)
     x1.metric("Giá trị độc lập/cp",money(row.FairValue_Base)); x2.metric("Giá chào mua/cp",money(offer_ps)); x3.metric("P/B giao dịch",mult(implied_pb)); x4.metric("P/TBV giao dịch",mult(implied_ptbv)); x5.metric("Giá trị giao dịch",fmtbn(consideration))
     st.markdown(f"""<div class="analysis-box"><b>HÀM Ý THƯƠNG VỤ</b><br>{mna_text(row.to_dict(),b)}</div>""",unsafe_allow_html=True)
-    st.warning("Đây là mô phỏng giá trị quyền kiểm soát, không phải giá chào mua quan sát. Control premium, synergy, integration cost và recapitalization là ASSUMPTION.")
+    if strategic_case.get("strategic_low") is not None:
+        st.markdown("### Kiểm tra tính hợp lý của vùng giá thâu tóm")
+        lo=strategic_case["low"]; hi=strategic_case["high"]
+        proof=pd.DataFrame([
+            ["Premium so với thị giá",pct(lo.get("premium_to_market")),pct(hi.get("premium_to_market"))],
+            ["P/B trên BVPS hiện tại",mult(lo.get("implied_pb_current")),mult(hi.get("implied_pb_current"))],
+            ["P/B hậu xử lý (BVPS +10k theo kịch bản nghiên cứu)",mult(lo.get("implied_pb_post_resolution")),mult(hi.get("implied_pb_post_resolution"))],
+            ["Giá trị lô 32,5%",fmtbn((lo.get("block_consideration_bn") or 0)*1e9),fmtbn((hi.get("block_consideration_bn") or 0)*1e9)],
+            ["Bao phủ 63.250 tỷ gốc+lãi",pct(lo.get("claim_recovery")),pct(hi.get("claim_recovery"))],
+            ["Premium so với high-case nghiên cứu công khai",pct(lo.get("premium_to_public_high")),pct(hi.get("premium_to_public_high"))],
+        ],columns=["Chỉ tiêu",money(strategic_case.get("strategic_low")),money(strategic_case.get("strategic_high"))])
+        st.dataframe(proof,hide_index=True,use_container_width=True)
+        st.markdown(f"""<div class="analysis-box"><b>KẾT LUẬN TÍNH HỢP LÝ</b><br>{strategic_case_text}</div>""",unsafe_allow_html=True)
+        if len(research):
+            st.markdown("### Đối chiếu nghiên cứu công khai")
+            rr=research.copy(); rr["BasePrice"]=pd.to_numeric(rr.BasePrice,errors="coerce")*1000; rr["LowPrice"]=pd.to_numeric(rr.LowPrice,errors="coerce")*1000; rr["HighPrice"]=pd.to_numeric(rr.HighPrice,errors="coerce")*1000
+            st.dataframe(rr[["Date","Institution","LowPrice","BasePrice","HighPrice","KeyAssumption","SourceURL"]],hide_index=True,use_container_width=True)
+    st.warning("Đây là kiểm tra tính hợp lý kinh tế, không phải bằng chứng giao dịch chắc chắn xảy ra. Control premium, synergy, thời gian xử lý và xác suất hoàn tất vẫn là các biến rủi ro.")
     if num(row.get("StrategicPriceLow")) is not None:
         st.markdown("### Đường cong giá lô chiến lược")
         curve=pd.DataFrame({"Quy mô lô":["5%","10%","20%","32,5%","51%"],"Giá tham chiếu/cp":[(num(row.get("StrategicPrice_5pct")) or np.nan)*1000,(num(row.get("StrategicPrice_10pct")) or np.nan)*1000,(num(row.get("StrategicPrice_20pct")) or np.nan)*1000,(num(row.get("StrategicPrice_32_5pct")) or np.nan)*1000,(num(row.get("StrategicPrice_51pct")) or np.nan)*1000]})
-        st.plotly_chart(px.line(curve,x="Quy mô lô",y="Giá tham chiếu/cp",markers=True,title="Giá trị chiến lược tăng theo quy mô lô/quyền kiểm soát"),use_container_width=True)
+        fig_curve=px.line(curve,x="Quy mô lô",y="Giá tham chiếu/cp",markers=True,title="Giá trị chiến lược tăng theo quy mô lô/quyền ảnh hưởng")
+        peer_pb_mean=pd.to_numeric(summary.PB_Current,errors="coerce").mean(); peer_implied=peer_pb_mean*num(row.get("BVPS_Used"))*1000 if num(row.get("BVPS_Used")) else None
+        if peer_implied is not None: fig_curve.add_hline(y=peer_implied,line_dash="dash",annotation_text="Giá hàm ý P/B bình quân 20 NH")
+        st.plotly_chart(fig_curve,use_container_width=True)
         st.caption(f"Nguồn intelligence: {row.get('StrategicSource','N/A')} · ngày {row.get('StrategicAsOfDate','N/A')} · độ tin cậy {row.get('StrategicConfidence','N/A')}. Đây không phải giá giao dịch đã xác nhận.")
     if len(precedents.dropna(how="all")):
         st.markdown("### Giao dịch so sánh")

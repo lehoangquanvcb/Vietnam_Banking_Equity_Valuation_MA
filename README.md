@@ -178,3 +178,32 @@ Mặc định BAT dùng 4 worker. Nếu Vnstock báo rate limit, giảm `VNSTOCK
 - Thêm đường cong giá lô chiến lược theo quy mô sở hữu, peer benchmarking mở rộng và đưa peer median vào báo cáo.
 - Sửa hiển thị đơn vị giá nội bộ nghìn đồng/cp thành đồng/cp trên app/báo cáo.
 - Biểu đồ CAR bỏ các điểm 0/âm không hợp lệ thay vì nối về 0.
+
+
+## ENGINE V5.0 - bản hợp nhất sửa hồi quy
+Bản này hợp nhất ba nhánh trước đây để tránh tái xuất hiện lỗi cũ:
+- Data Quality Guardrails: CAR thiếu dữ liệu không biến thành 0; CIR chuẩn hóa dấu; NPL ưu tiên exact metric ID; ratio cache được repair trước RUN_FAST.
+- Peer Benchmarking: app và báo cáo so ngân hàng với peer mean và peer median cho ROE, ROA, NIM, NPL, CAR, CASA, CIR, LDR, P/B và P/TBV.
+- Strategic / M&A Value: giá trị cơ bản tách khỏi Market Intelligence / strategic block value; STB có input 80.000-100.000 đồng/cp theo USER_MARKET_INTELLIGENCE.
+- Báo cáo phải có dòng `ENGINE V5.0` ở header. Nếu không thấy dòng này, Streamlit/GitHub vẫn đang chạy code cũ.
+
+Sau khi copy đè package vào project hiện tại (giữ `.git`), chạy `RUN_FAST.bat`. RUN_FAST V5.0 sẽ chạy `repair_cached_data.py` trước `build_valuation.py`, không gọi API Vnstock.
+
+## V6.0 - Bình quân 20 ngân hàng + Strategic Acquisition Case
+
+- Mọi biểu đồ phân tích ngân hàng có benchmark `Bình quân 20 NH` (bình quân số học các ngân hàng trong universe có dữ liệu hợp lệ tại từng kỳ).
+- Giá cổ phiếu được benchmark theo chỉ số hóa đầu kỳ = 100 để tránh so sánh sai do mệnh giá/thị giá khác nhau.
+- ROE-P/B scatter có crosshair bình quân 20 ngân hàng; Football Field có giá hàm ý từ P/B bình quân 20 ngân hàng.
+- Excel Master bổ sung `BENCHMARK_20_NH` và `STB_STRATEGIC_CASE`.
+- STB Strategic Case tách rõ: standalone/fundamental value, public research benchmark và strategic/block value.
+- Khoảng 80.000-100.000 đồng/cp là USER MARKET INTELLIGENCE, không được ghi nhận như giao dịch đã xác nhận.
+- Kiểm tra tính hợp lý sử dụng: premium so với thị giá; implied P/B hiện tại/hậu xử lý; giá trị lô 32,5%; tỷ lệ thu hồi trên ước tính 63.250 tỷ đồng; benchmark nghiên cứu công khai 2026.
+- Kết luận V6: 80.000 đồng/cp có thể biện minh tương đối tốt; 100.000 đồng/cp là hợp lý có điều kiện, cần xác suất xử lý tái cơ cấu cao và strategic/scarcity premium.
+
+
+## V6.1 - Sửa chart và trục thời gian
+- Tách chart quy mô bảng cân đối thành: (1) Tổng tài sản; (2) Dư nợ + tiền gửi.
+- Tách chart sinh lời thành: (1) ROE + ROA; (2) NIM + CIR.
+- Toàn bộ time-series chart dùng trục thời gian thực `PeriodDate`, không dùng categorical order của chuỗi ký tự quý.
+- Target bank và Bình quân 20 NH được sort theo cùng khóa thời gian trước khi vẽ; thiếu quý không làm xáo trộn trục hoành.
+- Sửa đồng thời Streamlit, PDF và Word report.

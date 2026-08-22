@@ -19,6 +19,30 @@ hist=load_csv(DATA/"bank_history_long.csv")
 precedents=load_csv(ROOT/"config/transaction_precedents.csv")
 market_intel=load_csv(ROOT/"config/market_intelligence.csv")
 
+# Defensive sanitation: cached/legacy CSVs must not reintroduce missing-as-zero or sign errors.
+def clean_cached_ratio(metric, s):
+    x=pd.to_numeric(s,errors="coerce")
+    x=x.where(~((x.abs()>1.5)&(x.abs()<=100)),x/100.0)
+    if metric=="CIR":
+        x=x.abs(); return x.where(x.between(.01,2.0))
+    if metric=="CAR": return x.where(x.between(.02,.50))
+    if metric=="NPL": return x.where(x.between(0,.50))
+    if metric=="CASA": return x.where(x.between(0,1.0))
+    if metric=="LDR": return x.where(x.between(.05,2.50))
+    if metric=="NIM": return x.where(x.between(-.10,.30))
+    if metric=="ROA": return x.where(x.between(-.20,.20))
+    if metric=="ROE": return x.where(x.between(-2.0,2.0))
+    return x
+
+for _m in ["ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA"]:
+    if _m in snap.columns: snap[_m]=clean_cached_ratio(_m,snap[_m])
+if len(hist):
+    hist["Value"]=pd.to_numeric(hist["Value"],errors="coerce")
+    for _m in ["ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA"]:
+        _mask=hist["Metric"].astype(str).eq(_m)
+        if bool(_mask.any()): hist.loc[_mask,"Value"]=clean_cached_ratio(_m,hist.loc[_mask,"Value"])
+    hist=hist.dropna(subset=["Value"])
+
 if snap.empty:
     pd.DataFrame().to_csv(OUT/"valuation_summary.csv",index=False)
     pd.DataFrame().to_csv(OUT/"valuation_methods.csv",index=False)
@@ -327,7 +351,7 @@ d["AdjustedBVPS_Restructuring"] = d["AdjustedEquity_Restructuring"]/d["Shares"]
 key=["Price","ROE_Used","BVPS_Used","Equity","NPAT","NPL","CAR","NIM"]
 d["DataCoverage"]=d[key].notna().sum(axis=1)/len(key)
 
-summary_cols=["Ticker","PeerGroup","OwnershipType","Price","PB_Current","PTBV_Current","PE_Current","ROE_Used","ROA","NIM","NPL","CAR","CIR","LDR","CASA","BVPS_Used","TBVPS","COE","LTG","NormalizedROE_Used","JustifiedPB","PeerPB_Adjusted","HistoricalPBMedian","Fair_ResidualIncome","Fair_JustifiedPB","Fair_PeerPB","Fair_HistoricalPB","FairValue_Bear","FairValue_Base","FairValue_Bull","Upside_Base","ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore","FundamentalScore","InvestmentScore","FundamentalView","InvestmentView","QualityScore","ValueScore","RiskScore","CompositeScore","ValuationView","QualityView","DataCoverage","TotalAssets_Growth","GrossLoans_Growth","CustomerDeposits_Growth","NPAT_Growth","NetInterestIncome_Growth","ReportStatus","ReportStamp","ReportCoverage","CoreMissingCount","CoreMissing","DataAgeDays","QualityWarnings","CanExportOfficial","CanExportDraft","NormalizationFlags","TotalAssets","Equity","TangibleEquity","NPAT","NetInterestIncome","OperatingIncome","ProvisionExpense","GrossLoans","CustomerDeposits","Shares","RetrievedAt","DataType","SourceMode","StrategicIntelligenceType","StrategicPriceLow","StrategicPriceHigh","StrategicPriceMid","StrategicReferenceStake","StrategicAsOfDate","StrategicSource","StrategicConfidence","StrategicNote","StrategicPremiumLow","StrategicPremiumHigh","StrategicVsFundamentalLow","StrategicVsFundamentalHigh","StrategicPrice_5pct","StrategicPrice_10pct","StrategicPrice_20pct","StrategicPrice_32_5pct","StrategicPrice_51pct"]
+summary_cols=["Ticker","PeerGroup","OwnershipType","Price","PB_Current","PTBV_Current","PE_Current","ROE_Used","ROA","NIM","NPL","NPL_AsOf","CAR","CAR_AsOf","CIR","LDR","CASA","CASA_AsOf","BVPS_Used","TBVPS","COE","LTG","NormalizedROE_Used","JustifiedPB","PeerPB_Adjusted","HistoricalPBMedian","Fair_ResidualIncome","Fair_JustifiedPB","Fair_PeerPB","Fair_HistoricalPB","FairValue_Bear","FairValue_Base","FairValue_Bull","Upside_Base","ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore","FundamentalScore","InvestmentScore","FundamentalView","InvestmentView","QualityScore","ValueScore","RiskScore","CompositeScore","ValuationView","QualityView","DataCoverage","TotalAssets_Growth","GrossLoans_Growth","CustomerDeposits_Growth","NPAT_Growth","NetInterestIncome_Growth","ReportStatus","ReportStamp","ReportCoverage","CoreMissingCount","CoreMissing","DataAgeDays","QualityWarnings","CanExportOfficial","CanExportDraft","NormalizationFlags","TotalAssets","Equity","TangibleEquity","NPAT","NetInterestIncome","OperatingIncome","ProvisionExpense","GrossLoans","CustomerDeposits","Shares","RetrievedAt","DataType","SourceMode","StrategicIntelligenceType","StrategicPriceLow","StrategicPriceHigh","StrategicPriceMid","StrategicReferenceStake","StrategicAsOfDate","StrategicSource","StrategicConfidence","StrategicNote","StrategicPremiumLow","StrategicPremiumHigh","StrategicVsFundamentalLow","StrategicVsFundamentalHigh","StrategicPrice_5pct","StrategicPrice_10pct","StrategicPrice_20pct","StrategicPrice_32_5pct","StrategicPrice_51pct"]
 for c in summary_cols:
     if c not in d:d[c]=np.nan
 summary=d[summary_cols].sort_values("CompositeScore",ascending=False)
@@ -340,6 +364,9 @@ peer_summary=summary.groupby("PeerGroup",dropna=False).agg(
     Banks=("Ticker","count"),MedianPB=("PB_Current","median"),MedianPTBV=("PTBV_Current","median"),MedianPE=("PE_Current","median"),
     MedianROE=("ROE_Used","median"),MedianROA=("ROA","median"),MedianNIM=("NIM","median"),MedianNPL=("NPL","median"),
     MedianCAR=("CAR","median"),MedianCIR=("CIR","median"),MedianLDR=("LDR","median"),MedianCASA=("CASA","median"),
+    MeanPB=("PB_Current","mean"),MeanPTBV=("PTBV_Current","mean"),MeanPE=("PE_Current","mean"),
+    MeanROE=("ROE_Used","mean"),MeanROA=("ROA","mean"),MeanNIM=("NIM","mean"),MeanNPL=("NPL","mean"),
+    MeanCAR=("CAR","mean"),MeanCIR=("CIR","mean"),MeanLDR=("LDR","mean"),MeanCASA=("CASA","mean"),
     MedianUpside=("Upside_Base","median"),MedianInvestmentScore=("InvestmentScore","median")
 ).reset_index()
 peer_summary.to_csv(OUT/"peer_summary.csv",index=False,encoding="utf-8-sig")

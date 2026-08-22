@@ -1,0 +1,6 @@
+Date,Institution,ReferenceType,LowPrice,BasePrice,HighPrice,KeyAssumption,SourceURL,DataType
+2026-03-19,HSC,TARGET_PRICE,,57.6,,Standalone valuation; FY26 P/B 1.58x,https://ckgvietnam.com/data/upload/bankshsc20260320en.pdf,PUBLIC_RESEARCH
+2026-04-15,MBS,TARGET_PRICE,,58.8,,2026 earnings and provisioning pressure,https://www.mbs.com.vn/files/uploads/2026/04/STB_UPDATE_20260415.pdf,PUBLIC_RESEARCH
+2026-04-15,VNDIRECT,TARGET_PRICE,66,73,81,Recovery sensitivity 20%-80%; 32.5% stake resolution,https://www.vndirect.com.vn/STB_BCCapnhat_20260415.pdf,PUBLIC_RESEARCH
+2026-05-14,Vietcap,TARGET_PRICE,,73.5,,Restructuring progress and 32.5% stake sale optionality,https://www.vietcap.com.vn/en/research-center/stb-market-perform-0-0-positive-restructuring-progress-but-valuation-looks-full-update,PUBLIC_RESEARCH
+2026-08-14,SBBS,TARGET_PRICE,,66.2,,Higher NPL and credit cost; restructuring delayed,https://sbbs.com.vn/research-center/company-reports/2q-2026-update-stb,PUBLIC_RESEARCH

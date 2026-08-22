@@ -68,5 +68,17 @@
     "car_low": 0.1,
     "pb_above_justified_buffer": 0.15,
     "price_move_alert": 0.35
+  },
+  "peer_benchmark_scope": "ALL_20_BANKS",
+  "strategic_case": {
+    "STB": {
+      "secured_claim_estimate_vnd_bn": 63250,
+      "public_high_case_value_per_share_thousand": 81.0,
+      "post_resolution_bvps_uplift_thousand": 10.0,
+      "car_uplift_low": 0.02,
+      "car_uplift_high": 0.03,
+      "source": "VNDIRECT Research 15/04/2026",
+      "source_url": "https://www.vndirect.com.vn/STB_BCCapnhat_20260415.pdf"
+    }
   }
 }

@@ -85,76 +85,136 @@ def period_key(v):
     return (int(y.group(1)) if y else 0, int(q.group(1)) if q else 0)
 
 
+RATIO_METRICS={"ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA"}
+
+
+def clean_ratio_value(metric, value):
+    """Convert ratio units and reject source placeholders / impossible values.
+
+    Key policy: missing is NaN, never zero.  Some Vnstock bank ratios use 0 as a
+    placeholder when a disclosure is unavailable (notably CAR), while CIR is
+    commonly negative because operating expenses carry a negative accounting sign.
+    """
+    v=pd.to_numeric(pd.Series([value]),errors="coerce").iloc[0]
+    if pd.isna(v): return np.nan
+    v=float(v)
+    if abs(v)>1.5 and abs(v)<=100:
+        v=v/100.0
+    if metric=="CIR":
+        v=abs(v)
+        return v if 0.01 <= v <= 2.0 else np.nan
+    if metric=="CAR":
+        # Zero / near-zero is a Vnstock missing-data placeholder, not an economic CAR.
+        return v if 0.02 <= v <= 0.50 else np.nan
+    if metric=="NPL":
+        return v if 0.0 <= v <= 0.50 else np.nan
+    if metric=="CASA":
+        return v if 0.0 <= v <= 1.0 else np.nan
+    if metric=="LDR":
+        return v if 0.05 <= v <= 2.50 else np.nan
+    if metric=="NIM":
+        return v if -0.10 <= v <= 0.30 else np.nan
+    if metric=="ROA":
+        return v if -0.20 <= v <= 0.20 else np.nan
+    if metric=="ROE":
+        return v if -2.0 <= v <= 2.0 else np.nan
+    return v
+
+
+def metric_mask(x, ids=(), names=()):
+    """Prefer exact metric IDs; only fall back to names/contains if exact IDs absent.
+
+    This prevents RT_BANK_NPL from also matching RT_BANK_NPL_COVERAGE.
+    """
+    idc=find_col(x,["id","code","metric_id"])
+    nc=find_col(x,["name","metric","indicator","item","label"])
+    if idc and ids:
+        s=x[idc].astype(str).str.upper().str.strip()
+        exact=pd.Series(False,index=x.index)
+        for a in ids:
+            exact |= s.eq(str(a).upper().strip())
+        if bool(exact.any()):
+            return exact,idc,nc
+    if nc and names:
+        s=x[nc].astype(str).map(norm)
+        # Prefer exact normalized names first.
+        exact=pd.Series(False,index=x.index)
+        for a in names:
+            exact |= s.eq(norm(a))
+        if bool(exact.any()):
+            return exact,idc,nc
+    mask=pd.Series(False,index=x.index)
+    if idc and ids:
+        s=x[idc].astype(str).str.upper()
+        for a in ids:
+            aa=str(a).upper(); mask |= s.str.contains(aa,regex=False,na=False)
+    if nc and names:
+        s=x[nc].astype(str).map(norm)
+        for a in names:
+            aa=norm(a); mask |= s.str.contains(aa,regex=False,na=False)
+    return mask,idc,nc
+
+
+def latest_valid_from_history(hist, metric):
+    rows=[r for r in hist if r.get("Metric")==metric and pd.notna(r.get("Value"))]
+    if not rows:return np.nan,None
+    rows=sorted(rows,key=lambda r:period_key(r.get("Period")))
+    r=rows[-1]
+    return float(r["Value"]),str(r["Period"])
+
+
 def latest_metric(df, ids=(), names=()):
     x=flatten(df)
     if x.empty: return np.nan
-    idc=find_col(x,["id","code","metric_id"])
-    nc=find_col(x,["name","metric","indicator","item","label"])
+    mask,idc,nc=metric_mask(x,ids,names)
     vc=find_col(x,["value","metric_value","ratio_value"])
     pc=find_col(x,["period","report_period","quarter","year"])
-    masks=[]
-    if idc:
-        s=x[idc].astype(str).str.upper()
-        for a in ids:
-            aa=str(a).upper(); masks.append(s.eq(aa)|s.str.contains(aa,regex=False,na=False))
-    if nc:
-        s=x[nc].astype(str).map(norm)
-        for a in names:
-            aa=norm(a); masks.append(s.str.contains(aa,regex=False,na=False))
-    for m in masks:
-        if not bool(m.any()): continue
-        z=x.loc[m].copy()
-        if pc:
-            z["_pk"]=z[pc].map(period_key); z=z.sort_values("_pk")
-        if vc:
-            vals=pd.to_numeric(z[vc],errors="coerce").dropna()
-            if len(vals): return float(vals.iloc[-1])
-            # Long-format Vnstock tables may have blank values for some ratios.
-            # Never fall through to metadata columns such as order/level, which can
-            # otherwise be mistaken for EPS/BVPS.
-            continue
-        # wide layout: choose latest period-like numeric column
-        for _,r in z.iterrows():
-            vals=[]
-            for c in z.columns:
-                if c in {idc,nc,pc,"_pk"}: continue
-                v=pd.to_numeric(pd.Series([r[c]]),errors="coerce").dropna()
-                if len(v): vals.append((period_key(c),float(v.iloc[0])))
-            if vals:
-                vals.sort(key=lambda q:q[0]); return vals[-1][1]
+    if not bool(mask.any()): return np.nan
+    z=x.loc[mask].copy()
+    if pc:
+        z["_pk"]=z[pc].map(period_key); z=z.sort_values("_pk")
+    if vc:
+        vals=pd.to_numeric(z[vc],errors="coerce").dropna()
+        if len(vals): return float(vals.iloc[-1])
+        return np.nan
+    for _,r in z.iterrows():
+        vals=[]
+        for c in z.columns:
+            if c in {idc,nc,pc,"_pk"}: continue
+            v=pd.to_numeric(pd.Series([r[c]]),errors="coerce").dropna()
+            if len(v): vals.append((period_key(c),float(v.iloc[0])))
+        if vals:
+            vals.sort(key=lambda q:q[0]); return vals[-1][1]
     return np.nan
 
 
 def history_metric(df, ticker, metric_name, ids=(), names=()):
     x=flatten(df)
     if x.empty: return []
-    idc=find_col(x,["id","code","metric_id"])
-    nc=find_col(x,["name","metric","indicator","item","label"])
+    mask,idc,nc=metric_mask(x,ids,names)
     vc=find_col(x,["value","metric_value","ratio_value"])
     pc=find_col(x,["period","report_period","quarter","year"])
-    mask=pd.Series(False,index=x.index)
-    if idc:
-        s=x[idc].astype(str).str.upper()
-        for a in ids:
-            aa=str(a).upper(); mask |= s.eq(aa)|s.str.contains(aa,regex=False,na=False)
-    if nc:
-        s=x[nc].astype(str).map(norm)
-        for a in names:
-            mask |= s.str.contains(norm(a),regex=False,na=False)
     z=x.loc[mask].copy()
     rows=[]
     if z.empty: return rows
     if pc and vc:
         for _,r in z.iterrows():
             v=pd.to_numeric(pd.Series([r[vc]]),errors="coerce").iloc[0]
+            if metric_name in RATIO_METRICS:
+                v=clean_ratio_value(metric_name,v)
             if pd.notna(v): rows.append({"Ticker":ticker,"Period":str(r[pc]),"Metric":metric_name,"Value":float(v)})
     else:
         for _,r in z.iterrows():
             for c in z.columns:
                 if period_key(c)[0] > 0:
                     v=pd.to_numeric(pd.Series([r[c]]),errors="coerce").iloc[0]
+                    if metric_name in RATIO_METRICS:
+                        v=clean_ratio_value(metric_name,v)
                     if pd.notna(v): rows.append({"Ticker":ticker,"Period":str(c),"Metric":metric_name,"Value":float(v)})
-    return rows
+    # One observation per ticker / period / metric.
+    best={}
+    for r in rows: best[(r["Ticker"],r["Period"],r["Metric"])]=r
+    return list(best.values())
 
 
 METRICS = {
@@ -269,10 +329,9 @@ def fetch_one(ticker):
     for m,(ids,names) in BS_METRICS.items(): snap[m]=latest_metric(bs_q,ids,names)
     for m,(ids,names) in IS_METRICS.items(): snap[m]=latest_metric(is_q,ids,names)
 
-    # Normalize ratio percentages if returned in percent units.
+    # Ratio guardrails. Missing source values remain NaN; never fabricate zero.
     for m in ["ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA"]:
-        v=snap.get(m)
-        if pd.notna(v) and abs(v)>1.5 and abs(v)<=100: snap[m]=v/100.0
+        snap[m]=clean_ratio_value(m,snap.get(m))
 
     # Derive BVPS/EPS only when direct ratios are absent and units appear coherent.
     if pd.isna(snap.get("BVPS")) and pd.notna(snap.get("Equity")) and pd.notna(snap.get("NPAT")) and pd.notna(snap.get("EPS")) and snap["EPS"]!=0:
@@ -284,6 +343,12 @@ def fetch_one(ticker):
     for m,(ids,names) in METRICS.items(): hist += history_metric(ratio_q,ticker,m,ids,names)
     for m,(ids,names) in BS_METRICS.items(): hist += history_metric(bs_q,ticker,m,ids,names)
     for m,(ids,names) in IS_METRICS.items(): hist += history_metric(is_q,ticker,m,ids,names)
+    for m in RATIO_METRICS:
+        v,per=latest_valid_from_history(hist,m)
+        if pd.notna(v):
+            snap[m]=v; snap[f"{m}_AsOf"]=per
+        else:
+            snap[m]=np.nan; snap[f"{m}_AsOf"]=None
     return snap,hist
 
 
@@ -313,15 +378,38 @@ def load_raw_bank(ticker):
         snap[m]=v
     for m,(ids,names) in BS_METRICS.items(): snap[m]=latest_metric(bs_q,ids,names)
     for m,(ids,names) in IS_METRICS.items(): snap[m]=latest_metric(is_q,ids,names)
+# Ratio guardrails. Missing source values remain NaN; never fabricate zero.
     for m in ["ROE","ROA","NIM","NPL","CAR","CIR","LDR","CASA"]:
-        v=snap.get(m)
-        if pd.notna(v) and abs(v)>1.5 and abs(v)<=100: snap[m]=v/100.0
+        snap[m]=clean_ratio_value(m,snap.get(m))
     snap["TangibleEquity"] = snap.get("Equity") - snap.get("IntangibleAssets") if pd.notna(snap.get("Equity")) and pd.notna(snap.get("IntangibleAssets")) else snap.get("Equity")
     hist=[]
     for m,(ids,names) in METRICS.items(): hist += history_metric(ratio_q,ticker,m,ids,names)
     for m,(ids,names) in BS_METRICS.items(): hist += history_metric(bs_q,ticker,m,ids,names)
     for m,(ids,names) in IS_METRICS.items(): hist += history_metric(is_q,ticker,m,ids,names)
+    for m in RATIO_METRICS:
+        v,per=latest_valid_from_history(hist,m)
+        if pd.notna(v):
+            snap[m]=v; snap[f"{m}_AsOf"]=per
+        else:
+            snap[m]=np.nan; snap[f"{m}_AsOf"]=None
     return snap,hist
+
+def derive_per_share_from_market_multiples(df):
+    """Fill EPS/BVPS only as CALCULATED values from Price/PE/PB when direct Vnstock values are blank.
+
+    Vnstock market prices in this pipeline are in thousand VND/share, so derived EPS/BVPS
+    remain in the same thousand-VND/share unit used by the valuation engine.
+    """
+    x=df.copy()
+    for c in ["Price","PB","PE","BVPS","EPS"]:
+        if c not in x.columns:x[c]=np.nan
+        x[c]=pd.to_numeric(x[c],errors="coerce")
+    m=x["BVPS"].isna() & x["Price"].notna() & x["PB"].gt(0)
+    x.loc[m,"BVPS"]=x.loc[m,"Price"]/x.loc[m,"PB"]
+    m=x["EPS"].isna() & x["Price"].notna() & x["PE"].replace(0,np.nan).notna()
+    x.loc[m,"EPS"]=x.loc[m,"Price"]/x.loc[m,"PE"]
+    return x
+
 
 def fetch_price(ticker, start_date="2021-01-01"):
     try:
@@ -483,6 +571,8 @@ def main():
         snap=snap.merge(latest,on="Ticker",how="left")
     else:
         snap["Price"]=np.nan
+
+    snap=derive_per_share_from_market_multiples(snap)
 
     # Stable output schemas and accumulated log.
     snap=snap.sort_values("Ticker").drop_duplicates("Ticker",keep="last")

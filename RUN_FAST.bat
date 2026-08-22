@@ -5,19 +5,23 @@ set "PYBRONZE=C:\Users\HP\.venv\Scripts\python.exe"
 if not exist "%PYBRONZE%" set "PYBRONZE=python"
 
 echo ============================================================
-echo CHE DO NHANH - KHONG GOI VNSTOCK
+echo ENGINE V5.0 - CHE DO NHANH - KHONG GOI VNSTOCK
 echo Excel assumptions ^> valuation/report outputs ^> GitHub
 echo ============================================================
 
-echo [1/3] Doc assumptions tu Excel Master...
+echo [1/4] Doc assumptions tu Excel Master...
 "%PYBRONZE%" scripts\export_master_inputs.py
 if errorlevel 1 goto :error
 
-echo [2/3] Build lai valuation + M^&A + report outputs tu CSV hien co...
+echo [2/4] Sua du lieu cache + guardrails CAR/NPL/CIR...
+"%PYBRONZE%" scripts\repair_cached_data.py
+if errorlevel 1 goto :error
+
+echo [3/4] Build lai valuation + M^&A + report outputs tu CSV hien co...
 "%PYBRONZE%" scripts\build_valuation.py
 if errorlevel 1 goto :error
 
-echo [3/3] Push GitHub neu co thay doi...
+echo [4/4] Push GitHub neu co thay doi...
 call :gitpush "Fast rebuild valuation and reports"
 if errorlevel 1 goto :error
 
