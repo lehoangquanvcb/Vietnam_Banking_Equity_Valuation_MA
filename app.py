@@ -11,14 +11,20 @@ from scripts.narrative_engine import (
     executive_summary,business_profile,profitability_text,asset_quality_text,
     funding_text,capital_text,valuation_text,catalysts_risks,mna_text
 )
-from scripts.report_engine import generate_pdf_bytes, generate_docx_bytes
-from scripts.credit_rating_engine import build_credit_rating, rating_table, FACTOR_LABELS, DESCRIPTOR_6
-from scripts.credit_rating_report import generate_credit_rating_pdf, generate_credit_rating_docx
+from scripts.report_engine import generate_pdf_bytes, generate_docx_bytes, report_font_status
+from scripts.credit_rating_engine import build_credit_rating, rating_table, FACTOR_LABELS, DESCRIPTOR_6, DESCRIPTOR_4
+from scripts.credit_rating_report import generate_credit_rating_pdf, generate_credit_rating_docx, credit_rating_font_status
 from scripts.quality_engine import assess_report_quality, normalization_flags
 from scripts.strategic_case import load_research, strategic_reasonableness, reasonableness_conclusion, all_bank_means
 
 ROOT=Path(__file__).resolve().parent
 DATA=ROOT/"data"; OUT=DATA/"model_outputs"
+
+
+try:
+    from scripts.history_engine import load_effective_history, target_and_peer, coverage_note, BENCHMARK_LABEL
+except Exception:
+    from history_engine import load_effective_history, target_and_peer, coverage_note, BENCHMARK_LABEL
 
 st.set_page_config(
     page_title="Nền tảng Phân tích, Định giá & M&A Ngân hàng Việt Nam",
@@ -147,44 +153,36 @@ def _clean_history_metric(df,metric):
     x=x.dropna(subset=["PeriodDate"]).sort_values("PeriodDate")
     return x
 
-def peer_history(metric):
-    if hist.empty:return pd.DataFrame()
-    x=hist[hist.Metric.astype(str).eq(str(metric))].copy()
-    x=_clean_history_metric(x,metric)
-    if x.empty:return pd.DataFrame()
-    return x.groupby("PeriodDate",as_index=False).agg(PeerMean=("Value","mean"),BankCount=("Ticker","nunique")).sort_values("PeriodDate")
+def peer_history(metric,ticker=None):
+    if ticker is None:
+        x=_clean_history_metric(hist[hist.Metric.astype(str).eq(str(metric))].copy(),metric)
+        if x.empty:return pd.DataFrame()
+        return x.groupby('PeriodDate',as_index=False).agg(PeerMean=('Value','mean'),BankCount=('Ticker','nunique')).sort_values('PeriodDate')
+    _,pm=target_and_peer(hist,ticker,metric)
+    return pm
 
 def metric_history_figure(ticker,metrics,title,percent=True):
-    """Biểu đồ lịch sử trên trục thời gian thực, có benchmark bình quân 20 ngân hàng niêm yết."""
-    fig=go.Figure()
-    all_values=[]
+    """Biểu đồ lịch sử: target và benchmark được đồng bộ theo kỳ, không nội suy."""
+    fig=go.Figure(); all_values=[]; notes=[]
     for metric in metrics:
-        h=hist[(hist.Ticker.astype(str)==str(ticker)) & (hist.Metric.astype(str)==str(metric))].copy()
-        h=_clean_history_metric(h,metric)
-        pm=peer_history(metric)
+        h,pm=target_and_peer(hist,ticker,metric)
         label=metric_vi(metric)
         if len(h):
-            all_values.extend(h.Value.tolist())
-            fig.add_trace(go.Scatter(
-                x=h.PeriodDate,y=h.Value,mode="lines+markers",
-                name=f"{ticker} - {label}",customdata=h.Period,
-                hovertemplate="%{customdata}<br>%{y}<extra></extra>"
-            ))
+            all_values.extend(pd.to_numeric(h.Value,errors='coerce').dropna().tolist())
+            mode='markers' if len(h)<3 else 'lines+markers'
+            fig.add_trace(go.Scatter(x=h.PeriodDate,y=h.Value,mode=mode,name=f'{ticker} - {label}',customdata=h.Period,
+                hovertemplate='%{customdata}<br>%{y}<extra></extra>'))
         if len(pm):
-            all_values.extend(pm.PeerMean.tolist())
-            fig.add_trace(go.Scatter(
-                x=pm.PeriodDate,y=pm.PeerMean,mode="lines",
-                line=dict(dash="dash"),
-                name=f"Bình quân 20 NH - {label}",
-                hovertemplate="%{x|%Y}<br>%{y}<extra></extra>"
-            ))
-    fig.update_layout(
-        title=title+" · so với bình quân 20 ngân hàng niêm yết",
-        height=390,legend=dict(orientation="h",y=-.22),
-        margin=dict(t=55,b=75)
-    )
-    fig.update_xaxes(type="date",dtick="M12",tickformat="%Y",title="")
-    if percent: fig.update_yaxes(tickformat=".1%")
+            all_values.extend(pd.to_numeric(pm.PeerMean,errors='coerce').dropna().tolist())
+            mode='markers' if len(pm)<3 else 'lines+markers'
+            fig.add_trace(go.Scatter(x=pm.PeriodDate,y=pm.PeerMean,mode=mode,line=dict(dash='dash'),
+                name=f'{BENCHMARK_LABEL} - {label}',customdata=pm.BankCount,
+                hovertemplate='%{x|%Y}<br>%{y}<br>Số NH có dữ liệu: %{customdata}/20<extra></extra>'))
+        notes.append(coverage_note(h,pm))
+    fig.update_layout(title=title+' · so với '+BENCHMARK_LABEL,height=410,legend=dict(orientation='h',y=-.22),margin=dict(t=55,b=90),
+        annotations=[dict(text='<br>'.join(notes),xref='paper',yref='paper',x=0,y=-0.32,showarrow=False,align='left',font=dict(size=10,color='#777'))])
+    fig.update_xaxes(type='date',tickformat='%Y',title='')
+    if percent:fig.update_yaxes(tickformat='.1%')
     _apply_y_padding(fig,all_values,percent=percent)
     return fig
 
@@ -194,7 +192,7 @@ def relative_price_figure(ticker):
     p["Date"]=pd.to_datetime(p.Date,errors="coerce"); p["Close"]=pd.to_numeric(p.Close,errors="coerce"); p=p.dropna(subset=["Date","Close"]).sort_values(["Ticker","Date"])
     p["Norm"]=p.groupby("Ticker")["Close"].transform(lambda s: s/s.iloc[0]*100 if len(s) and s.iloc[0] else np.nan)
     bench=p.groupby("Date",as_index=False).Norm.mean(); q=p[p.Ticker.astype(str)==str(ticker)]
-    fig=go.Figure(); fig.add_trace(go.Scatter(x=q.Date,y=q.Norm,mode="lines",name=f"{ticker} (đầu kỳ=100)")); fig.add_trace(go.Scatter(x=bench.Date,y=bench.Norm,mode="lines",line=dict(dash="dash"),name="Bình quân 20 NH (đầu kỳ=100)"))
+    fig=go.Figure(); fig.add_trace(go.Scatter(x=q.Date,y=q.Norm,mode="lines",name=f"{ticker} (đầu kỳ=100)")); fig.add_trace(go.Scatter(x=bench.Date,y=bench.Norm,mode="lines",line=dict(dash="dash"),name="Bình quân 20 ngân hàng niêm yết (đầu kỳ=100)"))
     fig.update_layout(title="Diễn biến giá tương đối · so với bình quân 20 ngân hàng niêm yết",height=430,yaxis_title="Chỉ số giá")
     return fig
 
@@ -202,7 +200,7 @@ summary=csv(OUT/"valuation_summary.csv")
 methods=csv(OUT/"valuation_methods.csv")
 peer=csv(OUT/"peer_summary.csv")
 mna=csv(OUT/"mna_baseline.csv")
-hist=csv(DATA/"bank_history_long.csv")
+hist=load_effective_history(ROOT,csv(DATA/"bank_history_long.csv"))
 prices=csv(DATA/"price_history.csv")
 log=csv(DATA/"refresh_log.csv")
 cfg=js(ROOT/"config/model_config.json")
@@ -236,10 +234,10 @@ else:
 
 st.sidebar.caption("Vnstock Bronze chạy LOCAL → ACTUAL CSV → mô hình định giá → GitHub → Streamlit chỉ đọc dữ liệu.")
 st.sidebar.caption("ACTUAL = dữ liệu nguồn · CALCULATED = công thức · ASSUMPTION = kịch bản.")
-st.sidebar.caption("ENGINE V7.0 · PEER AVERAGE + STRATEGIC CASE")
+st.sidebar.caption("ENGINE V7.3.2 · XHTN + M&A + ĐỊNH GIÁ")
 
 st.title("NỀN TẢNG PHÂN TÍCH, ĐỊNH GIÁ & M&A NGÂN HÀNG VIỆT NAM")
-st.caption("Vietnam Banking Valuation & M&A Intelligence Platform · ENGINE V7.0 · PEER AVERAGE + STRATEGIC CASE")
+st.caption("Vietnam Banking Valuation & M&A Intelligence Platform · ENGINE V7.3.2 · XHTN + M&A + ĐỊNH GIÁ")
 st.markdown(f"**Chế độ hiện tại:** {mode_label}")
 
 if summary.empty:
@@ -253,6 +251,19 @@ for c in summary.columns:
         summary[c]=pd.to_numeric(summary[c],errors="coerce")
 
 row=summary[summary.Ticker.astype(str).eq(str(selected))].iloc[0]
+
+# V7.3.2: khởi tạo trạng thái XHTN trước mọi tab/report path.
+# Người dùng có thể vào thẳng tab Báo cáo mà không cần mở tab XHTN trước.
+default_rating_export={
+    "governance_score":3,
+    "external_support_notches":0,
+    "analyst_notches":0,
+    "notch_overrides":None,
+    "factor_score_overrides":None,
+}
+if f"rating_export_{selected}" not in st.session_state:
+    st.session_state[f"rating_export_{selected}"]=default_rating_export.copy()
+rating_result=None  # compatibility guard cho các nhánh code cũ/stale state.
 peer_row=None
 if len(peer):
     q=peer[peer.PeerGroup.astype(str).eq(str(row.PeerGroup))]
@@ -309,7 +320,7 @@ with tabs[0]:
     with right:
         q=summary.sort_values("InvestmentScore",ascending=False).head(10).sort_values("InvestmentScore")
         fig=px.bar(q,x="InvestmentScore",y="Ticker",orientation="h",title="Top 10 điểm đầu tư · so sánh 20 ngân hàng niêm yết",hover_data=["Upside_Base","ROE_Used","NPL"])
-        mean_score=pd.to_numeric(summary.InvestmentScore,errors="coerce").mean(); fig.add_vline(x=mean_score,line_dash="dash",annotation_text=f"Bình quân 20 NH {mean_score:.1f}")
+        mean_score=pd.to_numeric(summary.InvestmentScore,errors="coerce").mean(); fig.add_vline(x=mean_score,line_dash="dash",annotation_text=f"Bình quân 20 ngân hàng niêm yết {mean_score:.1f}")
         fig.update_layout(height=460,xaxis_title="Điểm / 100"); st.plotly_chart(fig,use_container_width=True)
 
     if not presentation:
@@ -350,12 +361,12 @@ with tabs[2]:
             ["LDR",row.get("LDR"),peer_row.get("MeanLDR"),peer_row.get("MedianLDR"),all_means.get("LDR")],
             ["P/B",row.get("PB_Current"),peer_row.get("MeanPB"),peer_row.get("MedianPB"),all_means.get("PB_Current")],
             ["P/TBV",row.get("PTBV_Current"),peer_row.get("MeanPTBV"),peer_row.get("MedianPTBV"),all_means.get("PTBV_Current")],
-        ],columns=["Chỉ tiêu",selected,"Trung bình nhóm so sánh","Trung vị nhóm so sánh","Bình quân 20 NH"])
+        ],columns=["Chỉ tiêu",selected,"Trung bình nhóm so sánh","Trung vị nhóm so sánh","Bình quân 20 ngân hàng niêm yết"])
         pct_metrics={"ROE","ROA","NIM","NPL","CAR","CASA","CIR","LDR"}
         def _fb(r):
             if r["Chỉ tiêu"] in pct_metrics:
-                return [r["Chỉ tiêu"],pct(r[selected]),pct(r["Trung bình nhóm so sánh"]),pct(r["Trung vị nhóm so sánh"]),pct(r["Bình quân 20 NH"])]
-            return [r["Chỉ tiêu"],mult(r[selected]),mult(r["Trung bình nhóm so sánh"]),mult(r["Trung vị nhóm so sánh"]),mult(r["Bình quân 20 NH"])]
+                return [r["Chỉ tiêu"],pct(r[selected]),pct(r["Trung bình nhóm so sánh"]),pct(r["Trung vị nhóm so sánh"]),pct(r["Bình quân 20 ngân hàng niêm yết"])]
+            return [r["Chỉ tiêu"],mult(r[selected]),mult(r["Trung bình nhóm so sánh"]),mult(r["Trung vị nhóm so sánh"]),mult(r["Bình quân 20 ngân hàng niêm yết"])]
         shown=pd.DataFrame([_fb(r) for _,r in bench.iterrows()],columns=bench.columns)
         st.dataframe(shown,hide_index=True,use_container_width=True)
 
@@ -364,7 +375,7 @@ with tabs[2]:
     scores=[num(row.get(c)) for c in score_cols]
     fig=go.Figure(go.Bar(x=[x or 0 for x in scores],y=score_names,orientation="h",text=[f"{x:.0f}" if x is not None else "N/A" for x in scores],textposition="outside",name=selected))
     peer_scores=[pd.to_numeric(summary[c],errors="coerce").mean() for c in score_cols]
-    fig.add_trace(go.Scatter(x=peer_scores,y=score_names,mode="lines+markers",line=dict(dash="dash"),name="Bình quân 20 NH"))
+    fig.add_trace(go.Scatter(x=peer_scores,y=score_names,mode="lines+markers",line=dict(dash="dash"),name="Bình quân 20 ngân hàng niêm yết"))
     fig.update_layout(title="Thẻ điểm 6 trụ cột · so với bình quân 20 ngân hàng niêm yết",xaxis_range=[0,105],height=380,xaxis_title="Điểm / 100")
     st.plotly_chart(fig,use_container_width=True)
 
@@ -431,7 +442,7 @@ with tabs[3]:
         fig=px.bar(m.dropna(subset=["FairValuePerShare"]),x="Phương pháp",y="FairValuePerShare",title="Dải định giá - giá trị cơ bản, nhóm so sánh và chiến lược")
         fig.add_hline(y=row.Price,line_dash="dash",annotation_text="Giá thị trường")
         peer_pb_mean=pd.to_numeric(summary.PB_Current,errors="coerce").mean(); peer_implied=peer_pb_mean*num(row.get("BVPS_Used")) if num(row.get("BVPS_Used")) else None
-        if peer_implied is not None: fig.add_hline(y=peer_implied,line_dash="dot",annotation_text=f"P/B bình quân 20 NH {peer_pb_mean:.2f}x")
+        if peer_implied is not None: fig.add_hline(y=peer_implied,line_dash="dot",annotation_text=f"P/B bình quân 20 ngân hàng niêm yết {peer_pb_mean:.2f}x")
         if num(row.get("StrategicPriceLow")) is not None: fig.add_hrect(y0=row.StrategicPriceLow,y1=row.StrategicPriceHigh,opacity=.12,line_width=0,annotation_text="Vùng giá chiến lược")
         fig.update_layout(height=430,yaxis_title="Nghìn đồng/cp",xaxis_title="")
         st.plotly_chart(fig,use_container_width=True)
@@ -519,7 +530,7 @@ with tabs[5]:
         curve=pd.DataFrame({"Quy mô lô":["5%","10%","20%","32,5%","51%"],"Giá tham chiếu/cp":[(num(row.get("StrategicPrice_5pct")) or np.nan)*1000,(num(row.get("StrategicPrice_10pct")) or np.nan)*1000,(num(row.get("StrategicPrice_20pct")) or np.nan)*1000,(num(row.get("StrategicPrice_32_5pct")) or np.nan)*1000,(num(row.get("StrategicPrice_51pct")) or np.nan)*1000]})
         fig_curve=px.line(curve,x="Quy mô lô",y="Giá tham chiếu/cp",markers=True,title="Giá trị chiến lược tăng theo quy mô lô/quyền ảnh hưởng")
         peer_pb_mean=pd.to_numeric(summary.PB_Current,errors="coerce").mean(); peer_implied=peer_pb_mean*num(row.get("BVPS_Used"))*1000 if num(row.get("BVPS_Used")) else None
-        if peer_implied is not None: fig_curve.add_hline(y=peer_implied,line_dash="dash",annotation_text="Giá hàm ý P/B bình quân 20 NH")
+        if peer_implied is not None: fig_curve.add_hline(y=peer_implied,line_dash="dash",annotation_text="Giá hàm ý P/B bình quân 20 ngân hàng niêm yết")
         st.plotly_chart(fig_curve,use_container_width=True)
         st.caption(f"Nguồn intelligence: {row.get('StrategicSource','N/A')} · ngày {row.get('StrategicAsOfDate','N/A')} · độ tin cậy {row.get('StrategicConfidence','N/A')}. Đây không phải giá giao dịch đã xác nhận.")
     if len(precedents.dropna(how="all")):
@@ -558,34 +569,83 @@ with tabs[7]:
 
 with tabs[8]:
     st.subheader(f"Xếp hạng tín nhiệm ngân hàng - {selected}")
-    st.caption("Khung xếp hạng mô phỏng/nội bộ tham khảo cấu trúc báo cáo xếp hạng ngân hàng: Vị thế kinh doanh; Vốn, đòn bẩy & lợi nhuận; Vị thế rủi ro; Huy động vốn; Thanh khoản; Quản trị; và Hỗ trợ bên ngoài. Kết quả tự động không phải xếp hạng tín nhiệm chính thức.")
+    st.caption("Khung mô phỏng/nội bộ theo methodology đã phê duyệt. Mô hình đề xuất mức đánh giá từ dữ liệu công khai; chuyên viên xác nhận mức đánh giá và notch trước khi xuất báo cáo.")
+    st.info("Phương pháp V7.3.2: BICRA/Anchor = vnA- → Hồ sơ kinh doanh → Vốn & lợi nhuận → Vị thế rủi ro → ma trận Huy động vốn × Thanh khoản → điều chỉnh khác = SACP → hỗ trợ bên ngoài = ICR cuối cùng.")
 
-    st.info("Phương pháp V7.2: BICRA/Anchor = vnA- → cộng/trừ notch của Hồ sơ kinh doanh, Vốn & lợi nhuận, Vị thế rủi ro và ma trận Huy động vốn × Thanh khoản → SACP → điều chỉnh hỗ trợ bên ngoài → ICR cuối cùng.")
     rc1,rc2,rc3=st.columns(3)
-    governance_score=rc1.select_slider("Quản trị, quản lý & chiến lược",options=[1,2,3,4,5,6],value=3,help="Đầu vào định tính của HỒ SƠ KINH DOANH theo methodology: 1 = Rất Mạnh; 6 = Rất Yếu.")
-    analyst_notches=rc2.slider("Điều chỉnh khác trước SACP (notch)",-2,2,0,1,help="Các lưu ý khác/Basel/định tính chưa phản ánh đầy đủ trong 4 yếu tố chính. + là nâng bậc.")
-    support_notches=rc3.slider("Hỗ trợ bên ngoài sau SACP (notch)",-4,6,0,1,help="Hỗ trợ Chính phủ/NHNN hoặc tập đoàn sở hữu. + là nâng bậc ICR so với SACP.")
-    cr0=build_credit_rating(summary,selected,governance_score,support_notches,analyst_notches)
-    st.markdown("### Xác nhận notch theo ma trận methodology")
-    st.caption("Các mức Rất mạnh/Mạnh/Phù hợp/Trung Bình có notch cố định. Với Yếu/Rất yếu và các ô ‘hoặc hơn’, chuyên viên chọn notch trong đúng khoảng methodology; mức tự động mặc định là mức đầu tiên của ma trận.")
+    governance_score=rc1.select_slider("Quản trị, quản lý & chiến lược",options=[1,2,3,4,5,6],value=3,
+        help="Đầu vào định tính dùng trong đề xuất tự động của Hồ sơ kinh doanh. 1 = Rất Mạnh; 6 = Rất Yếu.",key=f"gov_{selected}")
+    analyst_notches=rc2.slider("Điều chỉnh khác trước SACP (notch)",-2,2,0,1,
+        help="Các lưu ý khác/Basel/định tính chưa phản ánh đầy đủ. + là nâng bậc.",key=f"analyst_{selected}")
+    support_notches=rc3.slider("Hỗ trợ bên ngoài sau SACP (notch)",-4,6,0,1,
+        help="Hỗ trợ Chính phủ/NHNN hoặc tập đoàn sở hữu. + là nâng bậc ICR so với SACP.",key=f"support_{selected}")
+
+    # Bước 1: mô hình đề xuất mức đánh giá yếu tố.
+    cr_auto=build_credit_rating(summary,selected,governance_score,support_notches,analyst_notches)
+    st.markdown("### 1. Xác nhận mức đánh giá từng yếu tố")
+    st.caption("Giá trị mặc định là mức mô hình đề xuất. Chuyên viên có thể điều chỉnh mức đánh giá; notch sẽ được tra LẠI từ ma trận chính thức, không giữ notch cũ.")
+    factor_score_overrides={}
+    s1,s2,s3,s4,s5=st.columns(5)
+    score_specs=[
+        (s1,"BusinessPosition","Hồ sơ kinh doanh",6,DESCRIPTOR_6),
+        (s2,"CapitalEarnings","Vốn & lợi nhuận",6,DESCRIPTOR_6),
+        (s3,"RiskPosition","Vị thế rủi ro",6,DESCRIPTOR_6),
+        (s4,"Funding","Huy động vốn",4,DESCRIPTOR_4),
+        (s5,"Liquidity","Thanh khoản",4,DESCRIPTOR_4),
+    ]
+    for col,key,label,max_score,descmap in score_specs:
+        auto=int(cr_auto["FactorScores"][key])
+        with col:
+            factor_score_overrides[key]=st.selectbox(
+                label,
+                options=list(range(1,max_score+1)),
+                index=auto-1,
+                format_func=lambda x,dm=descmap,ms=max_score: f"{dm[x]} ({x}/{ms})",
+                key=f"factor_score_{selected}_{key}",
+                help=f"Mô hình đề xuất: {descmap[auto]} ({auto}/{max_score})."
+            )
+
+    # Tính lại toàn bộ factor scores và ma trận dựa trên đúng các mức vừa xác nhận.
+    cr_scored=build_credit_rating(summary,selected,governance_score,support_notches,analyst_notches,
+                                  factor_score_overrides=factor_score_overrides)
+
+    st.markdown("### 2. Xác nhận notch theo ma trận methodology")
+    st.caption("Notch được sinh động theo mức đánh giá đang chọn. Widget dùng khóa theo ngân hàng + mức điểm để không thể giữ lại notch của một ô ma trận trước đó.")
     n1,n2,n3,n4=st.columns(4)
     overrides={}
     for col,key,label in [(n1,"BusinessPosition","Hồ sơ kinh doanh"),(n2,"CapitalEarnings","Vốn & lợi nhuận"),(n3,"RiskPosition","Vị thế rủi ro")]:
-        score=cr0["FactorScores"][key]; allowed=cr0["AllowedFactorNotches"][key]
+        score=int(cr_scored["FactorScores"][key]); allowed=list(cr_scored["AllowedFactorNotches"][key])
         with col:
             st.caption(f"{label}: {DESCRIPTOR_6[score]} ({score}/6)")
             if len(allowed)>1:
-                overrides[key]=st.selectbox(f"Notch {label}",allowed,index=0,key=f"notch_{key}")
+                overrides[key]=st.selectbox(
+                    f"Notch {label}",allowed,index=0,
+                    key=f"notch_{selected}_{key}_{score}",
+                    format_func=lambda x:f"{x:+d} bậc"
+                )
             else:
-                st.metric("Notch",f"{allowed[0]:+d}"); overrides[key]=allowed[0]
+                overrides[key]=allowed[0]; st.metric("Notch",f"{allowed[0]:+d} bậc")
+
     with n4:
-        st.caption(f"Huy động × Thanh khoản: {cr0['FundingDescriptor']} × {cr0['LiquidityDescriptor']}")
-        allowed_fl=cr0["AllowedFundingLiquidityNotches"]
+        fscore=int(cr_scored["FactorScores"]["Funding"]); lscore=int(cr_scored["FactorScores"]["Liquidity"])
+        allowed_fl=list(cr_scored["AllowedFundingLiquidityNotches"])
+        st.caption(f"Huy động × Thanh khoản: {DESCRIPTOR_4[fscore]} ({fscore}/4) × {DESCRIPTOR_4[lscore]} ({lscore}/4)")
         if len(allowed_fl)>1:
-            overrides["FundingLiquidity"]=st.selectbox("Notch Huy động × Thanh khoản",allowed_fl,index=0,key="notch_fl")
+            overrides["FundingLiquidity"]=st.selectbox(
+                "Notch Huy động × Thanh khoản",allowed_fl,index=0,
+                key=f"notch_fl_{selected}_{fscore}_{lscore}",
+                format_func=lambda x:f"{x:+d} bậc"
+            )
         else:
-            st.metric("Notch",f"{allowed_fl[0]:+d}"); overrides["FundingLiquidity"]=allowed_fl[0]
-    cr=build_credit_rating(summary,selected,governance_score,support_notches,analyst_notches,overrides)
+            overrides["FundingLiquidity"]=allowed_fl[0]; st.metric("Notch",f"{allowed_fl[0]:+d} bậc")
+        st.caption("Theo đúng Bảng 10; ví dụ Yếu × Mạnh = -1 bậc, không phải -3 bậc.")
+
+    cr=build_credit_rating(summary,selected,governance_score,support_notches,analyst_notches,overrides,factor_score_overrides)
+
+    # Kiểm soát chéo: notch cuối phải thuộc đúng ô ma trận hiện hành.
+    if cr["FundingLiquidityNotch"] not in cr["AllowedFundingLiquidityNotches"]:
+        st.error("LỖI KIỂM SOÁT MA TRẬN: notch Huy động × Thanh khoản không thuộc ô methodology hiện tại.")
+        st.stop()
 
     a,b,c,d,e=st.columns(5)
     a.metric("BICRA / Anchor",cr["AnchorRating"])
@@ -593,27 +653,29 @@ with tabs[8]:
     c.metric("SACP",cr["SACPRating"])
     d.metric("ICR cuối cùng",cr["FinalRating"])
     e.metric("Triển vọng",cr["Outlook"])
-    st.warning("KẾT QUẢ MÔ PHỎNG/NỘI BỘ: không được sử dụng như kết quả xếp hạng tín nhiệm chính thức nếu chưa hoàn tất quy trình phân tích định tính, phỏng vấn, kiểm soát chất lượng và Hội đồng xếp hạng.")
+    st.warning("KẾT QUẢ MÔ PHỎNG/NỘI BỘ: chưa phải kết quả xếp hạng tín nhiệm chính thức nếu chưa hoàn tất phân tích định tính, phỏng vấn, kiểm soát chất lượng và Hội đồng xếp hạng.")
 
     st.markdown("### Khung phân tích xếp hạng")
     rows=[]
     for k,v in cr["FactorScores"].items():
         maxs=4 if k in {"Funding","Liquidity"} else 6
-        notch = cr["FactorNotches"].get(k, "—") if k not in {"Funding","Liquidity"} else "—"
-        rows.append([FACTOR_LABELS[k],f"{v}/{maxs}",notch,cr["FactorRationale"][k]])
-    rows.append(["Huy động vốn × Thanh khoản","Ma trận Bảng 10",cr["FundingLiquidityNotch"],f"{cr['FundingDescriptor']} × {cr['LiquidityDescriptor']}"])
-    rows.append(["Điều chỉnh khác trước SACP","—",cr["OtherInternalNotches"],"Điều chỉnh chuyên viên/Hội đồng cho các yếu tố khác chưa phản ánh đầy đủ."])
-    st.dataframe(pd.DataFrame(rows,columns=["Yếu tố","Điểm","Notch tác động SACP","Luận điểm"]),hide_index=True,use_container_width=True)
+        notch = cr["FactorNotches"].get(k,"—") if k not in {"Funding","Liquidity"} else "—"
+        auto=cr["ComputedFactorScores"].get(k,v)
+        rows.append([FACTOR_LABELS[k],f"{v}/{maxs}",f"{auto}/{maxs}",notch,cr["FactorRationale"][k]])
+    rows.append(["Huy động vốn × Thanh khoản","Ma trận Bảng 10","—",cr["FundingLiquidityNotch"],cr["FundingLiquidityCell"]])
+    rows.append(["Điều chỉnh khác trước SACP","—","—",cr["OtherInternalNotches"],"Điều chỉnh chuyên viên/Hội đồng cho các yếu tố khác chưa phản ánh đầy đủ."])
+    st.dataframe(pd.DataFrame(rows,columns=["Yếu tố","Mức xác nhận","Mức mô hình đề xuất","Notch tác động SACP","Luận điểm"]),hide_index=True,use_container_width=True)
+
     st.markdown("### Cầu nối từ BICRA đến kết quả cuối cùng")
     bridge=pd.DataFrame([
         ["BICRA / Anchor",cr["AnchorRating"],"Điểm xuất phát"],
-        ["Hồ sơ kinh doanh",f"{cr['BusinessNotch']:+d}","notch"],
-        ["Vốn & lợi nhuận",f"{cr['CapitalNotch']:+d}","notch"],
-        ["Vị thế rủi ro",f"{cr['RiskNotch']:+d}","notch"],
-        ["Huy động vốn × Thanh khoản",f"{cr['FundingLiquidityNotch']:+d}","notch"],
-        ["Điều chỉnh khác",f"{cr['OtherInternalNotches']:+d}","notch"],
+        ["Hồ sơ kinh doanh",f"{cr['BusinessNotch']:+d} bậc","Theo Bảng 2"],
+        ["Vốn & lợi nhuận",f"{cr['CapitalNotch']:+d} bậc","Theo Bảng 2"],
+        ["Vị thế rủi ro",f"{cr['RiskNotch']:+d} bậc","Theo Bảng 2"],
+        ["Huy động vốn × Thanh khoản",f"{cr['FundingLiquidityNotch']:+d} bậc",cr["FundingLiquidityCell"]],
+        ["Điều chỉnh khác",f"{cr['OtherInternalNotches']:+d} bậc","Trước SACP"],
         ["SACP",cr["SACPRating"],"Sau điều chỉnh nội tại"],
-        ["Hỗ trợ bên ngoài",f"{cr['ExternalSupportNotches']:+d}","notch"],
+        ["Hỗ trợ bên ngoài",f"{cr['ExternalSupportNotches']:+d} bậc","Sau SACP"],
         ["ICR cuối cùng",cr["FinalRating"],"Kết quả"],
     ],columns=["Bước","Kết quả/Điều chỉnh","Ý nghĩa"])
     st.dataframe(bridge,hide_index=True,use_container_width=True)
@@ -643,10 +705,16 @@ with tabs[8]:
     st.markdown("### So sánh xếp hạng mô phỏng 20 ngân hàng niêm yết")
     st.dataframe(rating_table(summary,governance_score),hide_index=True,use_container_width=True,height=400)
 
+    # Lưu đúng trạng thái chuyên viên để tab Báo cáo chính thức dùng lại, không quay về default.
+    st.session_state[f"rating_export_{selected}"]={
+        "governance_score":governance_score,"external_support_notches":support_notches,"analyst_notches":analyst_notches,
+        "notch_overrides":overrides,"factor_score_overrides":factor_score_overrides
+    }
+
     st.markdown("### Xuất báo cáo xếp hạng tín nhiệm")
     try:
-        cr_pdf=generate_credit_rating_pdf(ROOT,selected,governance_score,support_notches,analyst_notches,overrides)
-        cr_docx=generate_credit_rating_docx(ROOT,selected,governance_score,support_notches,analyst_notches,overrides)
+        cr_pdf=generate_credit_rating_pdf(ROOT,selected,governance_score,support_notches,analyst_notches,overrides,factor_score_overrides)
+        cr_docx=generate_credit_rating_docx(ROOT,selected,governance_score,support_notches,analyst_notches,overrides,factor_score_overrides)
         x1,x2=st.columns(2)
         x1.download_button("📄 Tải Báo cáo XHTN PDF",cr_pdf,file_name=f"{selected}_Bao_cao_Xep_hang_Tin_nhiem.pdf",mime="application/pdf",use_container_width=True)
         x2.download_button("📝 Tải Báo cáo XHTN Word",cr_docx,file_name=f"{selected}_Bao_cao_Xep_hang_Tin_nhiem.docx",mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",use_container_width=True)
@@ -660,6 +728,13 @@ with tabs[9]:
     report_mode=st.radio("Nội dung báo cáo",["Định giá cổ phiếu","M&A / Thâu tóm","Xếp hạng tín nhiệm"],horizontal=True)
     rmode="mna" if report_mode.startswith("M&A") else "investment"
     st.caption("Báo cáo và dashboard dùng cùng valuation outputs; không copy số liệu thủ công.")
+    _fs=credit_rating_font_status() if report_mode=="Xếp hạng tín nhiệm" else report_font_status()
+    if _fs.get("is_lato"):
+        st.caption("Font xuất báo cáo: Lato (runtime đã sẵn sàng).")
+    elif _fs.get("ok"):
+        st.warning(f"Runtime chưa nhận Lato; báo cáo tạm dùng {_fs.get('font')} để không gián đoạn xuất file. packages.txt đã yêu cầu Streamlit Cloud cài fonts-lato; Reboot app sau khi push để nhận Lato.")
+    else:
+        st.warning("Runtime chưa tìm thấy font Unicode phù hợp; hãy Reboot app sau khi cập nhật packages.txt.")
     if qa["ReportStatus"]=="CHÍNH THỨC":
         st.success(f"ĐỦ ĐIỀU KIỆN PHÁT HÀNH · Độ phủ {qa['ReportCoverage']:.0%} · thiếu {qa['CoreMissingCount']} chỉ tiêu lõi.")
     elif qa["ReportStatus"]=="BẢN NHÁP":
@@ -671,8 +746,10 @@ with tabs[9]:
     if qa["CanExportDraft"]:
         try:
             if report_mode=="Xếp hạng tín nhiệm":
-                pdf_bytes=generate_credit_rating_pdf(ROOT,selected,3,0,0)
-                docx_bytes=generate_credit_rating_docx(ROOT,selected,3,0,0)
+                rs=default_rating_export.copy()
+                rs.update(st.session_state.get(f"rating_export_{selected}",{}) or {})
+                pdf_bytes=generate_credit_rating_pdf(ROOT,selected,rs["governance_score"],rs["external_support_notches"],rs["analyst_notches"],rs["notch_overrides"],rs["factor_score_overrides"])
+                docx_bytes=generate_credit_rating_docx(ROOT,selected,rs["governance_score"],rs["external_support_notches"],rs["analyst_notches"],rs["notch_overrides"],rs["factor_score_overrides"])
                 pdf_name=f"{selected}_Bao_cao_Xep_hang_Tin_nhiem.pdf"; docx_name=f"{selected}_Bao_cao_Xep_hang_Tin_nhiem.docx"
             else:
                 pdf_bytes=generate_pdf_bytes(ROOT,selected,rmode)

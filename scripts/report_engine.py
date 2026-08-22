@@ -27,6 +27,11 @@ from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
 
 try:
+    from scripts.history_engine import load_effective_history, target_and_peer, coverage_note, BENCHMARK_LABEL
+except Exception:
+    from history_engine import load_effective_history, target_and_peer, coverage_note, BENCHMARK_LABEL
+
+try:
     from scripts.narrative_engine import (
         executive_summary,business_profile,profitability_text,asset_quality_text,
         funding_text,capital_text,valuation_text,catalysts_risks,mna_text,pct,mult,money,bn,n
@@ -50,7 +55,8 @@ MARGIN=16*mm
 
 # Chuẩn trình bày báo cáo: toàn bộ biểu đồ dùng Lato, cỡ 10.
 plt.rcParams.update({
-    "font.family": "Lato",
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Lato", "DejaVu Sans"],
     "font.size": 10,
     "axes.titlesize": 10,
     "axes.labelsize": 10,
@@ -130,7 +136,7 @@ def _load(root):
         "methods":csv(out/"valuation_methods.csv"),
         "peer":csv(out/"peer_summary.csv"),
         "mna":csv(out/"mna_baseline.csv"),
-        "hist":csv(data/"bank_history_long.csv"),
+        "hist":load_effective_history(root,csv(data/"bank_history_long.csv")),
         "prices":csv(data/"price_history.csv"),
         "precedents":csv(root/"config/transaction_precedents.csv"),
         "research":load_research(root),
@@ -138,8 +144,8 @@ def _load(root):
     }
 
 def _font_paths():
-    """Find locally installed Lato. Font files are not distributed with this project."""
-    candidates = [
+    """Ưu tiên Lato; nếu runtime chưa có Lato thì dùng DejaVu Sans Unicode để report vẫn xuất được."""
+    lato_candidates = [
         ("/usr/share/fonts/truetype/lato/Lato-Regular.ttf","/usr/share/fonts/truetype/lato/Lato-Bold.ttf"),
         ("/usr/share/fonts/lato/Lato-Regular.ttf","/usr/share/fonts/lato/Lato-Bold.ttf"),
         (str(Path.home()/".fonts/Lato-Regular.ttf"),str(Path.home()/".fonts/Lato-Bold.ttf")),
@@ -148,20 +154,40 @@ def _font_paths():
     ]
     try:
         from matplotlib import font_manager
-        reg = font_manager.findfont("Lato", fallback_to_default=False)
-        bold = font_manager.findfont(font_manager.FontProperties(family="Lato", weight="bold"), fallback_to_default=False)
-        candidates.insert(0,(reg,bold))
+        lato_candidates.insert(0,(
+            font_manager.findfont("Lato", fallback_to_default=False),
+            font_manager.findfont(font_manager.FontProperties(family="Lato", weight="bold"), fallback_to_default=False)
+        ))
     except Exception:
         pass
-    for a,b in candidates:
+    for a,b in lato_candidates:
         if a and b and Path(a).exists() and Path(b).exists():
-            return a,b
-    return None,None
+            return a,b,"Lato"
+
+    fallback=[]
+    try:
+        import matplotlib
+        mf=Path(matplotlib.get_data_path())/"fonts"/"ttf"
+        fallback.append((str(mf/"DejaVuSans.ttf"),str(mf/"DejaVuSans-Bold.ttf")))
+    except Exception:
+        pass
+    fallback += [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf","/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
+    ]
+    for a,b in fallback:
+        if a and b and Path(a).exists() and Path(b).exists():
+            return a,b,"DejaVu Sans"
+    return None,None,None
+
+def report_font_status():
+    reg,bold,name=_font_paths()
+    return {"ok":bool(reg and bold),"font":name or "Không xác định","is_lato":name=="Lato"}
 
 def _register_pdf_fonts():
-    reg,bold=_font_paths()
+    reg,bold,name=_font_paths()
     if not reg or not bold:
-        raise RuntimeError("Không tìm thấy font Lato để xuất PDF. Hãy cài Lato trên máy chạy report; project không đóng gói file font.")
+        raise RuntimeError("Không tìm thấy font Unicode để xuất PDF.")
     if "VNFont" not in pdfmetrics.getRegisteredFontNames(): pdfmetrics.registerFont(TTFont("VNFont",reg))
     if "VNFont-Bold" not in pdfmetrics.getRegisteredFontNames(): pdfmetrics.registerFont(TTFont("VNFont-Bold",bold))
     return "VNFont","VNFont-Bold"
@@ -239,41 +265,37 @@ def _fig_to_png(fig):
     return bio
 
 def _chart_history(hist,ticker,metrics,title,percent=False):
-    x=_metric_history(hist,ticker,metrics); pm=_peer_metric_history(hist,metrics)
-    fig,ax=plt.subplots(figsize=(8.2,3.05))
-    plotted=[]
-    balance_metrics={"TotalAssets","GrossLoans","CustomerDeposits","Equity","TangibleEquity"}
+    fig,ax=plt.subplots(figsize=(8.2,3.05)); plotted=[]; notes=[]
+    balance_metrics={'TotalAssets','GrossLoans','CustomerDeposits','Equity','TangibleEquity'}
     use_trillion=(not percent) and all(str(m) in balance_metrics for m in metrics)
     scale=1e12 if use_trillion else 1.0
-
-    if x.empty:
-        ax.text(.5,.5,"Chưa có đủ dữ liệu lịch sử",ha="center",va="center"); ax.set_axis_off()
-    else:
-        for metric in metrics:
-            label=_metric_vi(metric)
-            g=x[x["Metric"].astype(str).eq(str(metric))].sort_values("_date").copy()
-            if g.empty: continue
-            gy=g["Value"]/scale
-            plotted.extend(gy.tolist())
-            line=ax.plot(g["_date"],gy,marker="o",markersize=3.8,linewidth=1.9,label=f"{ticker} - {label}")[0]
-            pg=pm[pm["Metric"].astype(str).eq(str(metric))].sort_values("_date").copy()
+    any_target=False
+    for metric in metrics:
+        g,pg=target_and_peer(hist,ticker,metric)
+        label=_metric_vi(metric)
+        if len(g):
+            any_target=True; gy=pd.to_numeric(g.Value,errors='coerce')/scale; plotted.extend(gy.dropna().tolist())
+            if len(g)<3:
+                line=ax.plot(g.PeriodDate,gy,linestyle='None',marker='o',markersize=5,label=f'{ticker} - {label}')[0]
+            else:
+                line=ax.plot(g.PeriodDate,gy,marker='o',markersize=3.8,linewidth=1.9,label=f'{ticker} - {label}')[0]
             if len(pg):
-                py=pg["Value"]/scale
-                plotted.extend(py.tolist())
-                ax.plot(pg["_date"],py,linestyle="--",linewidth=1.8,color=line.get_color(),alpha=.72,label=f"Bình quân 20 NH - {label}")
-        ax.set_title(title+" - so với bình quân 20 ngân hàng")
-        ax.grid(alpha=.20)
-        ax.legend(fontsize=7.4,ncol=2,loc="best")
-        _set_quarter_ticks(ax,[x,pm])
-        if percent:
-            ax.yaxis.set_major_formatter(FuncFormatter(_fmt_pct_axis))
-        elif use_trillion:
-            ax.set_ylabel("Nghìn tỷ đồng")
-            ax.yaxis.set_major_formatter(FuncFormatter(_fmt_decimal_axis))
-        else:
-            ax.yaxis.set_major_formatter(FuncFormatter(_fmt_decimal_axis))
+                py=pd.to_numeric(pg.PeerMean,errors='coerce')/scale; plotted.extend(py.dropna().tolist())
+                if len(pg)<3:
+                    ax.plot(pg.PeriodDate,py,linestyle='None',marker='x',markersize=5,color=line.get_color(),alpha=.72,label=f'{BENCHMARK_LABEL} - {label}')
+                else:
+                    ax.plot(pg.PeriodDate,py,linestyle='--',marker='o',markersize=3,linewidth=1.8,color=line.get_color(),alpha=.72,label=f'{BENCHMARK_LABEL} - {label}')
+            notes.append(coverage_note(g,pg))
+    if not any_target:
+        ax.text(.5,.5,'Chưa có đủ dữ liệu lịch sử',ha='center',va='center');ax.set_axis_off()
+    else:
+        ax.set_title(title+' - so với '+BENCHMARK_LABEL);ax.grid(alpha=.20);ax.legend(ncol=2,loc='best')
+        if percent:ax.yaxis.set_major_formatter(FuncFormatter(_fmt_pct_axis))
+        elif use_trillion:ax.set_ylabel('Nghìn tỷ đồng');ax.yaxis.set_major_formatter(FuncFormatter(_fmt_decimal_axis))
+        else:ax.yaxis.set_major_formatter(FuncFormatter(_fmt_decimal_axis))
         _set_y_padding(ax,plotted,percent=percent)
-        fig.tight_layout()
+        ax.text(0,-0.30,' '.join(notes),transform=ax.transAxes,fontsize=8,color='#666666',va='top',wrap=True)
+        fig.autofmt_xdate();fig.tight_layout(rect=[0,.08,1,1])
     return _fig_to_png(fig)
 
 
@@ -289,8 +311,8 @@ def _chart_peer(summary,ticker):
         cur=q[q["Ticker"].astype(str).eq(str(ticker))]
         if len(cur): ax.scatter(cur["ROE_Used"],cur["PB_Current"],s=120,marker="*")
         mean_roe=pd.to_numeric(q["ROE_Used"],errors="coerce").mean(); mean_pb=pd.to_numeric(q["PB_Current"],errors="coerce").mean()
-        ax.axvline(mean_roe,linestyle="--",alpha=.65,label=f"ROE bình quân 20 NH {_vi_num(mean_roe*100,1)}%"); ax.axhline(mean_pb,linestyle="--",alpha=.65,label=f"P/B bình quân 20 NH {_vi_num(mean_pb,2)}x")
-        ax.set_xlabel("ROE"); ax.set_ylabel("P/B (x)"); ax.set_title("Bản đồ ROE - P/B - so với bình quân 20 ngân hàng"); ax.legend(fontsize=7)
+        ax.axvline(mean_roe,linestyle="--",alpha=.65,label=f"ROE bình quân 20 ngân hàng niêm yết {_vi_num(mean_roe*100,1)}%"); ax.axhline(mean_pb,linestyle="--",alpha=.65,label=f"P/B bình quân 20 ngân hàng niêm yết {_vi_num(mean_pb,2)}x")
+        ax.set_xlabel("ROE"); ax.set_ylabel("P/B (x)"); ax.set_title("Bản đồ ROE - P/B - so với bình quân 20 ngân hàng niêm yết"); ax.legend(fontsize=7)
         ax.xaxis.set_major_formatter(FuncFormatter(_fmt_pct_axis)); ax.yaxis.set_major_formatter(FuncFormatter(lambda v,pos:_vi_num(v,2))); ax.grid(alpha=.2)
     return _fig_to_png(fig)
 
@@ -306,10 +328,10 @@ def _chart_valuation(methods,row,summary=None):
         if n(row.get("Price")) is not None: ax.axhline(n(row.get("Price"))*1000,linestyle="--",label="Giá thị trường")
         if summary is not None and len(summary) and n(row.get("BVPS_Used")) is not None:
             mpb=pd.to_numeric(summary["PB_Current"],errors="coerce").mean()
-            if pd.notna(mpb): ax.axhline(mpb*n(row.get("BVPS_Used"))*1000,linestyle=":",linewidth=2,label=f"Giá hàm ý P/B bình quân 20 NH ({_vi_num(mpb,2)}x)")
+            if pd.notna(mpb): ax.axhline(mpb*n(row.get("BVPS_Used"))*1000,linestyle=":",linewidth=2,label=f"Giá hàm ý P/B bình quân 20 ngân hàng niêm yết ({_vi_num(mpb,2)}x)")
         slo=n(row.get("StrategicPriceLow")); shi=n(row.get("StrategicPriceHigh"))
         if slo is not None and shi is not None: ax.axhspan(slo*1000,shi*1000,alpha=.10,label="Vùng giá chiến lược/M&A")
-        ax.set_title("Giá trị theo phương pháp - so với bình quân 20 ngân hàng"); ax.set_ylabel("Đồng/cp"); ax.yaxis.set_major_formatter(FuncFormatter(_fmt_vnd_axis)); ax.tick_params(axis="x",rotation=20,labelsize=10); ax.legend(fontsize=7)
+        ax.set_title("Giá trị theo phương pháp - so với bình quân 20 ngân hàng niêm yết"); ax.set_ylabel("Đồng/cp"); ax.yaxis.set_major_formatter(FuncFormatter(_fmt_vnd_axis)); ax.tick_params(axis="x",rotation=20,labelsize=10); ax.legend(fontsize=7)
     return _fig_to_png(fig)
 
 
@@ -317,11 +339,11 @@ def _chart_scores(row,summary=None):
     names=["Sinh lời","Tăng trưởng","Chất lượng TS","Nguồn vốn","An toàn vốn","Định giá"]
     score_cols=["ProfitabilityScore","GrowthScore","AssetQualityScore","FundingScore","CapitalScore","ValuationScore"]
     vals=[row.get(c) for c in score_cols]; fig,ax=plt.subplots(figsize=(8.2,2.70)); y=np.arange(len(names)); vv=[n(v) or 0 for v in vals]
-    ax.barh(y,vv); ax.set_yticks(y,names); ax.set_xlim(0,100); ax.set_title("Thẻ điểm 6 trụ cột · so với bình quân 20 ngân hàng")
+    ax.barh(y,vv); ax.set_yticks(y,names); ax.set_xlim(0,100); ax.set_title("Thẻ điểm 6 trụ cột · so với bình quân 20 ngân hàng niêm yết")
     for i,v in enumerate(vv): ax.text(v+1,i,f"{v:.0f}",va="center")
     if summary is not None and len(summary):
         means=[pd.to_numeric(summary[c],errors="coerce").mean() for c in score_cols]
-        ax.plot(means,y,linestyle="--",marker="o",label="Bình quân 20 NH"); ax.legend(fontsize=7)
+        ax.plot(means,y,linestyle="--",marker="o",label="Bình quân 20 ngân hàng niêm yết"); ax.legend(fontsize=7)
     return _fig_to_png(fig)
 
 
@@ -359,8 +381,8 @@ def _chart_price(prices,ticker):
         allp=prices.copy(); allp["Date"]=pd.to_datetime(allp["Date"],errors="coerce"); allp["Close"]=pd.to_numeric(allp["Close"],errors="coerce"); allp=allp.dropna(subset=["Date","Close"]).sort_values(["Ticker","Date"])
         allp["Norm"]=allp.groupby("Ticker")["Close"].transform(lambda s: s/s.iloc[0]*100 if len(s) and s.iloc[0] else np.nan)
         bench=allp.groupby("Date",as_index=False)["Norm"].mean(); p=allp[allp["Ticker"].astype(str).eq(str(ticker))].copy()
-        ax.plot(p["Date"],p["Norm"],label=f"{ticker} (chỉ số=100)"); ax.plot(bench["Date"],bench["Norm"],linestyle="--",label="Bình quân 20 NH (chỉ số=100)")
-        ax.set_title("Diễn biến giá tương đối - so với bình quân 20 ngân hàng"); ax.set_ylabel("Chỉ số giá (đầu kỳ=100)"); ax.grid(alpha=.2); ax.legend(fontsize=7)
+        ax.plot(p["Date"],p["Norm"],label=f"{ticker} (chỉ số=100)"); ax.plot(bench["Date"],bench["Norm"],linestyle="--",label="Bình quân 20 ngân hàng niêm yết (chỉ số=100)")
+        ax.set_title("Diễn biến giá tương đối - so với bình quân 20 ngân hàng niêm yết"); ax.set_ylabel("Chỉ số giá (đầu kỳ=100)"); ax.grid(alpha=.2); ax.legend(fontsize=7)
     return _fig_to_png(fig)
 
 
@@ -568,7 +590,7 @@ def generate_pdf_bytes(root,ticker,mode="investment"):
     chart(_chart_peer(d["summary"],ticker))
     if peer_row:
         pdata=[
-            ["Chỉ tiêu",ticker,"Trung bình nhóm so sánh","Bình quân 20 NH"],
+            ["Chỉ tiêu",ticker,"Trung bình nhóm so sánh","Bình quân 20 ngân hàng niêm yết"],
             ["ROE",pct(row.get("ROE_Used")),pct(peer_row.get("MeanROE")),pct(allmean.get("ROE_Used"))],
             ["NIM",pct(row.get("NIM")),pct(peer_row.get("MeanNIM")),pct(allmean.get("NIM"))],
             ["NPL",pct(row.get("NPL")),pct(peer_row.get("MeanNPL")),pct(allmean.get("NPL"))],

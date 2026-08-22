@@ -125,7 +125,7 @@ def _fmt_pct(x):
     if v is None:return "N/A"
     return f"{v*100:.1f}%".replace(".",",")
 
-def build_credit_rating(summary:pd.DataFrame,ticker:str,governance_score=3,external_support_notches=0,analyst_notches=0,notch_overrides=None):
+def build_credit_rating(summary:pd.DataFrame,ticker:str,governance_score=3,external_support_notches=0,analyst_notches=0,notch_overrides=None,factor_score_overrides=None):
     """Saigon Ratings 2025 notch framework.
 
     Anchor BICRA (vnA-) -> Hồ sơ kinh doanh -> Vốn & lợi nhuận -> Vị thế rủi ro
@@ -183,10 +183,26 @@ def build_credit_rating(summary:pd.DataFrame,ticker:str,governance_score=3,exter
         (_pct_rank(s.TotalAssets,row.get("TotalAssets"),True),.10),
     ])
     funding_score=_score4(funding_p); liquidity_score=_score4(liquidity_p)
-    funding_liquidity_notch=FUNDING_LIQUIDITY_NOTCH[funding_score][liquidity_score]
 
-    factor_scores={"BusinessPosition":business_score,"CapitalEarnings":capital_score,"RiskPosition":risk_score,
-                   "Funding":funding_score,"Liquidity":liquidity_score}
+    # Chuyên viên có thể xác nhận/override MỨC ĐÁNH GIÁ yếu tố.
+    # Override này diễn ra TRƯỚC khi tra notch để bảo đảm ma trận luôn đúng với mức đánh giá đang hiển thị.
+    factor_score_overrides=factor_score_overrides or {}
+    score_limits={"BusinessPosition":6,"CapitalEarnings":6,"RiskPosition":6,"Funding":4,"Liquidity":4}
+    computed_scores={"BusinessPosition":business_score,"CapitalEarnings":capital_score,"RiskPosition":risk_score,
+                     "Funding":funding_score,"Liquidity":liquidity_score}
+    factor_scores={}
+    for key,auto_score in computed_scores.items():
+        chosen=int(factor_score_overrides.get(key,auto_score))
+        if chosen<1 or chosen>score_limits[key]:
+            raise ValueError(f"Điểm {chosen} không hợp lệ cho {FACTOR_LABELS[key]} (1-{score_limits[key]}).")
+        factor_scores[key]=chosen
+
+    business_score=factor_scores["BusinessPosition"]
+    capital_score=factor_scores["CapitalEarnings"]
+    risk_score=factor_scores["RiskPosition"]
+    funding_score=factor_scores["Funding"]
+    liquidity_score=factor_scores["Liquidity"]
+    funding_liquidity_notch=FUNDING_LIQUIDITY_NOTCH[funding_score][liquidity_score]
     factor_notches={
         "BusinessPosition":NOTCH_6[business_score],
         "CapitalEarnings":NOTCH_6[capital_score],
@@ -232,10 +248,12 @@ def build_credit_rating(summary:pd.DataFrame,ticker:str,governance_score=3,exter
       "BusinessNotch":factor_notches["BusinessPosition"],"CapitalNotch":factor_notches["CapitalEarnings"],"RiskNotch":factor_notches["RiskPosition"],
       "FundingLiquidityNotch":funding_liquidity_notch,"OtherInternalNotches":int(analyst_notches),"InternalNotches":int(internal_notches),
       "ExternalSupportNotches":int(external_support_notches),"TotalNotches":int(internal_notches)+int(external_support_notches),
-      "FactorScores":factor_scores,"FactorNotches":factor_notches,"FactorRationale":rationale,
+      "FactorScores":factor_scores,"ComputedFactorScores":computed_scores,"FactorScoreOverrides":factor_score_overrides,
+      "FactorNotches":factor_notches,"FactorRationale":rationale,
       "AllowedFactorNotches":{k:NOTCH_6_ALLOWED[v] for k,v in factor_scores.items() if k not in {"Funding","Liquidity"}},
       "AllowedFundingLiquidityNotches":FUNDING_LIQUIDITY_ALLOWED[(funding_score,liquidity_score)],
       "FundingDescriptor":DESCRIPTOR_4[funding_score],"LiquidityDescriptor":DESCRIPTOR_4[liquidity_score],
+      "FundingLiquidityCell":f"{DESCRIPTOR_4[funding_score]} ({funding_score}/4) × {DESCRIPTOR_4[liquidity_score]} ({liquidity_score}/4)",
       "Strengths":strengths or ["Chưa phát hiện điểm mạnh nổi trội từ dữ liệu công khai hiện có."],
       "Constraints":constraints or ["Chưa phát hiện hạn chế định lượng nổi trội; vẫn cần rà soát định tính."],
       "UpgradeTriggers":["CAR kỳ vọng cải thiện bền vững sang vùng đánh giá cao hơn trong methodology.","NPL và tổn thất tín dụng giảm bền vững so với nhóm ngân hàng tương đồng.","CASA, tiền gửi khách hàng và dự trữ thanh khoản cải thiện, giúp nâng đánh giá Huy động vốn/Thanh khoản.","Hồ sơ kinh doanh và quản trị được chứng minh tốt hơn trung bình ngành mà không gia tăng khẩu vị rủi ro."],

@@ -180,18 +180,18 @@ Mặc định BAT dùng 4 worker. Nếu Vnstock báo rate limit, giảm `VNSTOCK
 - Biểu đồ CAR bỏ các điểm 0/âm không hợp lệ thay vì nối về 0.
 
 
-## ENGINE V5.0 - bản hợp nhất sửa hồi quy
+## ENGINE V7.3 - bản hợp nhất sửa hồi quy
 Bản này hợp nhất ba nhánh trước đây để tránh tái xuất hiện lỗi cũ:
 - Data Quality Guardrails: CAR thiếu dữ liệu không biến thành 0; CIR chuẩn hóa dấu; NPL ưu tiên exact metric ID; ratio cache được repair trước RUN_FAST.
 - Peer Benchmarking: app và báo cáo so ngân hàng với peer mean và peer median cho ROE, ROA, NIM, NPL, CAR, CASA, CIR, LDR, P/B và P/TBV.
 - Strategic / M&A Value: giá trị cơ bản tách khỏi Market Intelligence / strategic block value; STB có input 80.000-100.000 đồng/cp theo USER_MARKET_INTELLIGENCE.
-- Báo cáo phải có dòng `ENGINE V5.0` ở header. Nếu không thấy dòng này, Streamlit/GitHub vẫn đang chạy code cũ.
+- Báo cáo phải có dòng `ENGINE V7.3` ở header. Nếu không thấy dòng này, Streamlit/GitHub vẫn đang chạy code cũ.
 
 Sau khi copy đè package vào project hiện tại (giữ `.git`), chạy `RUN_FAST.bat`. RUN_FAST V5.0 sẽ chạy `repair_cached_data.py` trước `build_valuation.py`, không gọi API Vnstock.
 
 ## V6.0 - Bình quân 20 ngân hàng + Strategic Acquisition Case
 
-- Mọi biểu đồ phân tích ngân hàng có benchmark `Bình quân 20 NH` (bình quân số học các ngân hàng trong universe có dữ liệu hợp lệ tại từng kỳ).
+- Mọi biểu đồ phân tích ngân hàng có benchmark `Bình quân 20 ngân hàng niêm yết` (bình quân số học các ngân hàng trong universe có dữ liệu hợp lệ tại từng kỳ).
 - Giá cổ phiếu được benchmark theo chỉ số hóa đầu kỳ = 100 để tránh so sánh sai do mệnh giá/thị giá khác nhau.
 - ROE-P/B scatter có crosshair bình quân 20 ngân hàng; Football Field có giá hàm ý từ P/B bình quân 20 ngân hàng.
 - Excel Master bổ sung `BENCHMARK_20_NH` và `STB_STRATEGIC_CASE`.
@@ -205,7 +205,7 @@ Sau khi copy đè package vào project hiện tại (giữ `.git`), chạy `RUN_
 - Tách chart quy mô bảng cân đối thành: (1) Tổng tài sản; (2) Dư nợ + tiền gửi.
 - Tách chart sinh lời thành: (1) ROE + ROA; (2) NIM + CIR.
 - Toàn bộ time-series chart dùng trục thời gian thực `PeriodDate`, không dùng categorical order của chuỗi ký tự quý.
-- Target bank và Bình quân 20 NH được sort theo cùng khóa thời gian trước khi vẽ; thiếu quý không làm xáo trộn trục hoành.
+- Target bank và Bình quân 20 ngân hàng niêm yết được sort theo cùng khóa thời gian trước khi vẽ; thiếu quý không làm xáo trộn trục hoành.
 - Sửa đồng thời Streamlit, PDF và Word report.
 
 
@@ -246,3 +246,33 @@ Chạy `RUN_CREDIT_RATING_REPORT.bat`, nhập mã ngân hàng (KLB/STB/VCB...) v
 - ICR cuối cùng = SACP + notch hỗ trợ bên ngoài.
 - Báo cáo bổ sung bảng cầu nối BICRA -> SACP -> ICR và phần Rủi ro vĩ mô & ngành tổng hợp từ báo cáo KLB tham khảo.
 - Benchmark hiển thị là "Bình quân 20 ngân hàng niêm yết".
+
+
+## V7.3 - Sửa triệt để lịch sử chỉ tiêu và biểu đồ benchmark
+- Benchmark trên chart chỉ hiển thị ở đúng kỳ/năm mà ngân hàng mục tiêu có dữ liệu; không còn đường peer kéo dài ngoài chuỗi ngân hàng.
+- Không nội suy, không thay dữ liệu thiếu bằng 0. Với chuỗi <3 quan sát, chỉ hiển thị marker để tránh tạo cảm giác có xu hướng liên tục.
+- CAR được xử lý theo năm do tần suất công bố không đồng nhất; benchmark được ghép theo cùng năm.
+- Bổ sung lịch sử CAR KLB 2014-2022 từ Báo cáo XHTN KLB 8.2026 do người dùng cung cấp; Vnstock/cache vẫn có ưu tiên cao hơn nếu cùng ticker-kỳ-chỉ tiêu.
+- Mỗi chart có chú thích số quan sát và số ngân hàng có dữ liệu benchmark.
+- Toàn bộ nhãn benchmark thống nhất: “Bình quân 20 ngân hàng niêm yết”.
+- RUN_FAST/FULL tự áp dụng historical supplement trước khi build, nên refresh Vnstock không làm mất dữ liệu bổ sung đã xác minh.
+- Methodology BICRA/Anchor + exact notch matrix V7.2 được giữ nguyên.
+
+## ENGINE V7.3.1 - Sửa toàn bộ lỗi tồn đọng của module XHTN
+- Ma trận notch Huy động vốn x Thanh khoản được tra theo đúng hàng = Huy động vốn, cột = Thanh khoản. Kiểm soát bắt buộc: Yếu (4/4) x Mạnh (1/4) = -1 bậc.
+- Chuyên viên có thể xác nhận mức đánh giá 5 yếu tố trước khi tra notch. Khi mức đánh giá thay đổi, notch được tính lại từ ma trận; không giữ trạng thái widget cũ.
+- Khóa Streamlit của notch phụ thuộc vào mã ngân hàng và mức điểm hiện tại, ngăn notch của một ô ma trận trước đó bị tái sử dụng.
+- Báo cáo Word/PDF dùng đúng các mức đánh giá và notch đã xác nhận trên dashboard; tab Báo cáo chính thức không quay về giá trị mặc định.
+- CAR KLB lịch sử 2014-2022 được giữ trong `config/historical_overrides.csv` với lineage `VERIFIED_HISTORICAL`; không ghi đè vào `data/bank_history_long.csv` và không giả danh Vnstock ACTUAL.
+- Benchmark của mọi chuỗi lịch sử chỉ xuất hiện tại kỳ/năm ngân hàng mục tiêu có dữ liệu. Không nội suy và không biến N/A thành 0.
+- Chuỗi quá thưa được hiển thị bằng marker thay vì nối line gây hiểu nhầm.
+- `scripts/validate_rating_methodology.py` chạy self-check ma trận 16 ô, thang rating, lineage dữ liệu và đồng bộ benchmark trước khi build/push.
+- Nhãn benchmark thống nhất: `Bình quân 20 ngân hàng niêm yết`.
+
+
+## V7.3.2 - Streamlit Runtime Fix
+- Thêm `packages.txt` với `fonts-lato` và `fontconfig` để Streamlit Cloud tự cài Lato ở lớp hệ điều hành.
+- PDF ưu tiên Lato; nếu runtime chưa nhận Lato thì fallback sang DejaVu Sans Unicode để không khóa chức năng xuất báo cáo.
+- Khởi tạo trạng thái XHTN ngay khi chọn ngân hàng; vào thẳng tab Báo cáo không còn phụ thuộc việc đã mở tab XHTN hay chưa.
+- Trạng thái xuất XHTN được merge với default an toàn.
+- Chuẩn hóa nốt nhãn `Bình quân 20 ngân hàng niêm yết`.

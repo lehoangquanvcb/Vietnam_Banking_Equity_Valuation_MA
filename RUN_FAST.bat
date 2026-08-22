@@ -5,23 +5,31 @@ set "PYBRONZE=C:\Users\HP\.venv\Scripts\python.exe"
 if not exist "%PYBRONZE%" set "PYBRONZE=python"
 
 echo ============================================================
-echo ENGINE V5.0 - CHE DO NHANH - KHONG GOI VNSTOCK
+echo ENGINE V7.3.2 - CHE DO NHANH - KHONG GOI VNSTOCK
 echo Excel assumptions ^> valuation/report outputs ^> GitHub
 echo ============================================================
 
-echo [1/4] Doc assumptions tu Excel Master...
+echo [1/6] Doc assumptions tu Excel Master...
 "%PYBRONZE%" scripts\export_master_inputs.py
 if errorlevel 1 goto :error
 
-echo [2/4] Sua du lieu cache + guardrails CAR/NPL/CIR...
+echo [2/6] Sua du lieu cache + guardrails CAR/NPL/CIR...
 "%PYBRONZE%" scripts\repair_cached_data.py
 if errorlevel 1 goto :error
 
-echo [3/4] Build lai valuation + M^&A + report outputs tu CSV hien co...
+echo [3/6] Kiem tra lich su bo sung va lineage - KHONG ghi de ACTUAL cache...
+"%PYBRONZE%" scripts\apply_historical_supplement.py
+if errorlevel 1 goto :error
+
+echo [4/7] Self-check methodology notch + ma tran + dong bo benchmark...
+"%PYBRONZE%" scripts\validate_rating_methodology.py
+if errorlevel 1 goto :error
+
+echo [5/6] Build lai valuation + M^&A + report outputs tu CSV hien co...
 "%PYBRONZE%" scripts\build_valuation.py
 if errorlevel 1 goto :error
 
-echo [4/4] Push GitHub neu co thay doi...
+echo [7/7] Push GitHub neu co thay doi...
 call :gitpush "Fast rebuild valuation and reports"
 if errorlevel 1 goto :error
 

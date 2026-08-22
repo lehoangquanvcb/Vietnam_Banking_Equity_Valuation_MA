@@ -19,6 +19,9 @@ echo [2/4] Refresh Fundamental Bronze...
 if errorlevel 1 goto :error
 
 echo [3/4] Build valuation + M^&A outputs...
+"%PYBRONZE%" scripts\apply_historical_supplement.py
+if errorlevel 1 goto :error
+
 "%PYBRONZE%" scripts\build_valuation.py
 if errorlevel 1 goto :error
 

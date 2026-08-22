@@ -22,12 +22,17 @@ from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
 from xml.sax.saxutils import escape
 
 try:
+    from scripts.history_engine import load_effective_history, target_and_peer, coverage_note, BENCHMARK_LABEL
+except Exception:
+    from history_engine import load_effective_history, target_and_peer, coverage_note, BENCHMARK_LABEL
+
+try:
     from scripts.credit_rating_engine import build_credit_rating, FACTOR_LABELS
 except Exception:
     from credit_rating_engine import build_credit_rating, FACTOR_LABELS
 
 PAGE_W,PAGE_H=A4; MARGIN=16*mm
-plt.rcParams.update({"font.family":"Lato","font.size":10,"axes.titlesize":10,"axes.labelsize":10,"xtick.labelsize":10,"ytick.labelsize":10,"legend.fontsize":10})
+plt.rcParams.update({"font.family":"sans-serif","font.sans-serif":["Lato","DejaVu Sans"],"font.size":10,"axes.titlesize":10,"axes.labelsize":10,"xtick.labelsize":10,"ytick.labelsize":10,"legend.fontsize":10})
 
 def _csv(p):
     try:return pd.read_csv(p)
@@ -35,7 +40,7 @@ def _csv(p):
 
 def _load(root):
     root=Path(root); data=root/'data'; out=data/'model_outputs'
-    return _csv(out/'valuation_summary.csv'),_csv(data/'bank_history_long.csv')
+    return _csv(out/'valuation_summary.csv'),load_effective_history(root,_csv(data/'bank_history_long.csv'))
 
 def _n(x):
     try:
@@ -51,21 +56,37 @@ def _pct(x,d=1):return 'N/A' if _n(x) is None else _vi(_n(x)*100,d)+'%'
 def _bn(x):return 'N/A' if _n(x) is None else _vi(_n(x)/1e9,0)+' tỷ đồng'
 
 def _font_paths():
-    candidates=[('/usr/share/fonts/truetype/lato/Lato-Regular.ttf','/usr/share/fonts/truetype/lato/Lato-Bold.ttf'),('C:/Windows/Fonts/Lato-Regular.ttf','C:/Windows/Fonts/Lato-Bold.ttf')]
+    candidates=[
+        ('/usr/share/fonts/truetype/lato/Lato-Regular.ttf','/usr/share/fonts/truetype/lato/Lato-Bold.ttf'),
+        ('/usr/share/fonts/lato/Lato-Regular.ttf','/usr/share/fonts/lato/Lato-Bold.ttf'),
+        ('C:/Windows/Fonts/Lato-Regular.ttf','C:/Windows/Fonts/Lato-Bold.ttf')
+    ]
     try:
         from matplotlib import font_manager
         candidates.insert(0,(font_manager.findfont('Lato',fallback_to_default=False),font_manager.findfont(font_manager.FontProperties(family='Lato',weight='bold'),fallback_to_default=False)))
-    except:pass
+    except Exception:pass
     for a,b in candidates:
-        if Path(a).exists() and Path(b).exists():return a,b
-    return None,None
+        if a and b and Path(a).exists() and Path(b).exists():return a,b,'Lato'
+    fallback=[]
+    try:
+        import matplotlib
+        mf=Path(matplotlib.get_data_path())/'fonts'/'ttf'
+        fallback.append((str(mf/'DejaVuSans.ttf'),str(mf/'DejaVuSans-Bold.ttf')))
+    except Exception:pass
+    fallback.append(('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf','/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+    for a,b in fallback:
+        if a and b and Path(a).exists() and Path(b).exists():return a,b,'DejaVu Sans'
+    return None,None,None
+
+def credit_rating_font_status():
+    a,b,name=_font_paths(); return {'ok':bool(a and b),'font':name or 'Không xác định','is_lato':name=='Lato'}
 
 def _reg_fonts():
-    a,b=_font_paths()
+    a,b,name=_font_paths()
     if not a:return 'Helvetica','Helvetica-Bold'
-    if 'CRLato' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CRLato',a))
-    if 'CRLato-Bold' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CRLato-Bold',b))
-    return 'CRLato','CRLato-Bold'
+    if 'CRFont' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CRFont',a))
+    if 'CRFont-Bold' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CRFont-Bold',b))
+    return 'CRFont','CRFont-Bold'
 
 def _chart_factor(rating):
     fs=rating['FactorScores']; labels=[FACTOR_LABELS[k] for k in fs]; vals=[]
@@ -82,21 +103,24 @@ def _period_date(s):
     return pd.Timestamp(int(m.group(1)),(int(m.group(2))-1)*3+1,1)
 
 def _chart_metric(hist,summary,ticker,metric,title):
-    h=hist[hist.Ticker.astype(str).eq(str(ticker)) & hist.Metric.astype(str).eq(metric)].copy()
-    p=hist[hist.Metric.astype(str).eq(metric)].copy()
-    for x in (h,p):
-        x['Value']=pd.to_numeric(x.Value,errors='coerce'); x['Date']=x.Period.map(_period_date)
-    h=h.dropna(subset=['Value','Date']).sort_values('Date'); p=p.dropna(subset=['Value','Date'])
-    if metric in {'ROE','ROA','NIM','NPL','CAR','CIR','LDR','CASA'}:
-        h=h[h.Value!=0]; p=p[p.Value!=0]
-    if metric=='CAR':h=h[h.Value>0];p=p[p.Value>0]
-    pm=p.groupby('Date',as_index=False).Value.mean().sort_values('Date')
-    fig,ax=plt.subplots(figsize=(8.2,2.85));
-    if len(h):ax.plot(h.Date,h.Value,marker='o',label=ticker)
-    if len(pm):ax.plot(pm.Date,pm.Value,linestyle='--',label='Bình quân 20 ngân hàng niêm yết')
-    ax.set_title(title+' - so với bình quân 20 ngân hàng niêm yết');ax.grid(alpha=.2);ax.legend();
+    h,pm=target_and_peer(hist,ticker,metric)
+    fig,ax=plt.subplots(figsize=(8.2,3.05))
+    vals=[]
+    if len(h):
+        vals.extend(pd.to_numeric(h.Value,errors='coerce').dropna().tolist())
+        if len(h)<3:ax.plot(h.PeriodDate,h.Value,linestyle='None',marker='o',markersize=5,label=ticker)
+        else:ax.plot(h.PeriodDate,h.Value,marker='o',linewidth=1.9,label=ticker)
+    if len(pm):
+        vals.extend(pd.to_numeric(pm.PeerMean,errors='coerce').dropna().tolist())
+        if len(pm)<3:ax.plot(pm.PeriodDate,pm.PeerMean,linestyle='None',marker='x',markersize=5,label=BENCHMARK_LABEL)
+        else:ax.plot(pm.PeriodDate,pm.PeerMean,linestyle='--',marker='o',markersize=3,label=BENCHMARK_LABEL)
+    ax.set_title(title+' - so với '+BENCHMARK_LABEL);ax.grid(alpha=.2);ax.legend()
     if metric in {'ROE','ROA','NIM','NPL','CAR','CIR','LDR','CASA'}:ax.yaxis.set_major_formatter(FuncFormatter(lambda v,pos:_vi(v*100,1)+'%'))
-    fig.autofmt_xdate();bio=BytesIO();fig.tight_layout();fig.savefig(bio,format='png',dpi=160,bbox_inches='tight');plt.close(fig);bio.seek(0);return bio
+    if vals:
+        lo=min(vals);hi=max(vals);span=max(hi-lo,abs(hi)*.08,0.005 if metric in {'ROE','ROA','NIM','NPL','CAR','CIR','LDR','CASA'} else 1)
+        pad=span*.15;ax.set_ylim(max(0,lo-pad) if lo>=0 else lo-pad,hi+pad)
+    ax.text(0,-0.30,coverage_note(h,pm),transform=ax.transAxes,fontsize=8,color='#666666',va='top',wrap=True)
+    fig.autofmt_xdate();bio=BytesIO();fig.tight_layout(rect=[0,.08,1,1]);fig.savefig(bio,format='png',dpi=160,bbox_inches='tight');plt.close(fig);bio.seek(0);return bio
 
 def _rl_img(bio,w=178*mm):
     from PIL import Image
@@ -106,8 +130,8 @@ def _table(data,font,bold,widths=None,fs=10):
     t=Table(data,colWidths=widths,repeatRows=1,hAlign='LEFT')
     t.setStyle(TableStyle([('GRID',(0,0),(-1,-1),.35,colors.HexColor('#CBD5E1')),('BACKGROUND',(0,0),(-1,0),colors.HexColor('#EAF0F7')),('FONTNAME',(0,0),(-1,-1),font),('FONTNAME',(0,0),(-1,0),bold),('FONTSIZE',(0,0),(-1,-1),fs),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LEFTPADDING',(0,0),(-1,-1),4),('RIGHTPADDING',(0,0),(-1,-1),4),('TOPPADDING',(0,0),(-1,-1),4),('BOTTOMPADDING',(0,0),(-1,-1),4)]));return t
 
-def generate_credit_rating_pdf(root,ticker,governance_score=3,external_support_notches=0,analyst_notches=0,notch_overrides=None):
-    summary,hist=_load(root); row=summary[summary.Ticker.astype(str).eq(str(ticker))].iloc[0]; cr=build_credit_rating(summary,ticker,governance_score,external_support_notches,analyst_notches,notch_overrides)
+def generate_credit_rating_pdf(root,ticker,governance_score=3,external_support_notches=0,analyst_notches=0,notch_overrides=None,factor_score_overrides=None):
+    summary,hist=_load(root); row=summary[summary.Ticker.astype(str).eq(str(ticker))].iloc[0]; cr=build_credit_rating(summary,ticker,governance_score,external_support_notches,analyst_notches,notch_overrides,factor_score_overrides)
     font,bold=_reg_fonts(); bio=BytesIO(); doc=SimpleDocTemplate(bio,pagesize=A4,leftMargin=MARGIN,rightMargin=MARGIN,topMargin=18*mm,bottomMargin=15*mm,title=f'Báo cáo xếp hạng tín nhiệm mô phỏng - {ticker}')
     h1=ParagraphStyle('h1',fontName=bold,fontSize=14,leading=18,textColor=colors.HexColor('#0F2747'),spaceBefore=6,spaceAfter=4)
     h2=ParagraphStyle('h2',fontName=bold,fontSize=12,leading=15,textColor=colors.HexColor('#2F6B2F'),spaceBefore=5,spaceAfter=3)
@@ -160,8 +184,8 @@ def _set_lato(run,size=None,bold=None):
     if size:run.font.size=Pt(size)
     if bold is not None:run.bold=bold
 
-def generate_credit_rating_docx(root,ticker,governance_score=3,external_support_notches=0,analyst_notches=0,notch_overrides=None):
-    summary,hist=_load(root); row=summary[summary.Ticker.astype(str).eq(str(ticker))].iloc[0];cr=build_credit_rating(summary,ticker,governance_score,external_support_notches,analyst_notches,notch_overrides)
+def generate_credit_rating_docx(root,ticker,governance_score=3,external_support_notches=0,analyst_notches=0,notch_overrides=None,factor_score_overrides=None):
+    summary,hist=_load(root); row=summary[summary.Ticker.astype(str).eq(str(ticker))].iloc[0];cr=build_credit_rating(summary,ticker,governance_score,external_support_notches,analyst_notches,notch_overrides,factor_score_overrides)
     doc=Document();sec=doc.sections[0];sec.page_width=Mm(210);sec.page_height=Mm(297);sec.top_margin=Mm(16);sec.bottom_margin=Mm(15);sec.left_margin=Mm(16);sec.right_margin=Mm(16)
     for sty in ['Normal','Title','Heading 1','Heading 2']:
         s=doc.styles[sty];s.font.name='Lato';s._element.rPr.rFonts.set(qn('w:ascii'),'Lato');s._element.rPr.rFonts.set(qn('w:hAnsi'),'Lato');s._element.rPr.rFonts.set(qn('w:eastAsia'),'Lato')
